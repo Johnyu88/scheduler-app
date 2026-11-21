@@ -55,8 +55,9 @@
 </head>
 <body>
 <header>
-  <h1>2A 排班原型 <span class="small">資料只存在這台裝置的瀏覽器，不會上傳</span></h1>
+  <h1><span id="unitName">2A</span> 排班原型 <span class="small">資料只存在這台裝置的瀏覽器，不會上傳</span></h1>
   <div class="row">
+    <label>單位 <select id="unit"><option value="2A">2A</option><option value="3AB">3AB</option></select></label>
     <label>月份 <input type="month" id="month"></label>
     <label>本月應休 <input type="number" id="required" min="0" max="31" style="width:60px"></label>
     <label>平日放假日 <input type="text" id="holidays" placeholder="自動帶入" style="width:90px"></label>

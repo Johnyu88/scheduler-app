@@ -1,12 +1,17 @@
 (function () {
   const R = window.Rules;
-  const KEY = 'miaoli-scheduler-2a-v1';
+  const UNIT = (function () { try { return localStorage.getItem('miaoli-unit') === '3AB' ? '3AB' : '2A'; } catch (e) { return '2A'; } })();
+  const KEY = UNIT === '3AB' ? 'miaoli-scheduler-3ab-v1' : 'miaoli-scheduler-2a-v1';
+  // 單位設定：每班人數（硬性）、借調代碼、是否每班至少 1 位 N2 以上
+  const CFG = UNIT === '3AB'
+    ? { coverage: { D: { weekday: 7, off: 6 }, E: 5, N: 4 }, lend: '2A', lendLabel: '支援2A', requireSenior: true }
+    : { coverage: { D: 1, E: 1, N: 1 }, lend: '3AB', lendLabel: '支援3AB', requireSenior: false };
   const LEVELS = ['N', 'N1', 'N2', 'N3', 'N4'];
   const WD = ['日', '一', '二', '三', '四', '五', '六'];
   const BRUSHES = [
     { code: '班', label: '上班', cls: 'D' }, { code: '例', label: '例', cls: 'rest' }, { code: '休息', label: '休息', cls: 'rest' },
     { code: '休假', label: '休假', cls: 'leave' }, { code: '特休', label: '特休', cls: 'leave' }, { code: '補休', label: '補休', cls: 'rest' },
-    { code: '國定', label: '國定', cls: 'rest' }, { code: '3AB', label: '支援3AB', cls: 'lend' }, { code: '公假', label: '公假', cls: 'leave' }, { code: '', label: '清除', cls: '' },
+    { code: '國定', label: '國定', cls: 'rest' }, { code: CFG.lend, label: CFG.lendLabel, cls: 'lend' }, { code: '公假', label: '公假', cls: 'leave' }, { code: '', label: '清除', cls: '' },
   ];
   const PREBOOK_BRUSHES = ['休假', '特休', ''];
 
@@ -49,7 +54,7 @@
 
   function codeClass(c) {
     if (c === 'D' || c === 'E' || c === 'N') return c;
-    if (c === '3AB') return 'lend';
+    if (c === '3AB' || c === '2A') return 'lend';
     if (['例', '休息', '國定', '補國', '補休'].includes(c)) return 'rest';
     if (c) return 'leave';
     return '';
@@ -69,7 +74,7 @@
   }
 
   function issuesNow() {
-    const params = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest };
+    const params = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { coverage: CFG.coverage, requireSenior: CFG.requireSenior } };
     return mode === 'schedule'
       ? R.checkSchedule({ ...params, cells: S.cells })
       : R.checkPrebook({ ...params, requestedAt: S.requestedAt, prebook: S.prebook });
@@ -87,7 +92,7 @@
     h += '</tr>';
     S.staff.forEach((p) => {
       const r = rowOf(p.id);
-      h += `<tr><td class="name">${esc(p.name)}<div class="small">${p.level} ${p.shift}${p.support ? ' 支援' : ''}</div></td>`;
+      h += `<tr><td class="name">${esc(p.name)}<div class="small">${p.level} ${p.shift}${p.support ? ' 支援' : ''}${p.extra ? ' 特約' : ''}</div></td>`;
       for (let d = 1; d <= n; d++) {
         const w = R.dow(S.year, S.month, d);
         const c = r[d - 1];
@@ -133,12 +138,13 @@
   }
 
   function renderStaff() {
-    let h = '<tr><th>姓名</th><th>職級</th><th>本月班</th><th>支援</th><th>上月班</th><th>預假登記日</th><th></th></tr>';
+    let h = '<tr><th>姓名</th><th>職級</th><th>本月班</th><th>支援</th><th>特約</th><th>上月班</th><th>預假登記日</th><th></th></tr>';
     S.staff.forEach((p, i) => {
       h += `<tr><td><input type="text" data-i="${i}" data-k="name" value="${esc(p.name)}"></td>
       <td><select data-i="${i}" data-k="level">${LEVELS.map((l) => `<option ${l === p.level ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
       <td><select data-i="${i}" data-k="shift">${['D', 'E', 'N'].map((l) => `<option ${l === p.shift ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
       <td><input type="checkbox" data-i="${i}" data-k="support" ${p.support ? 'checked' : ''}></td>
+      <td><input type="checkbox" data-i="${i}" data-k="extra" ${p.extra ? 'checked' : ''}></td>
       <td><select data-i="${i}" data-k="prevShift">${['', 'D', 'E', 'N'].map((l) => `<option ${l === p.prevShift ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
       <td><input type="date" data-i="${i}" data-k="prebookAt" value="${p.prebookAt || ''}" style="width:130px"></td>
       <td><button data-del="${i}">刪</button></td></tr>`;
@@ -188,16 +194,16 @@
       const p = S.staff.find((x) => x.id === id);
       return p ? `${esc(p.name)} ${r.supportUsage[id]} 天` : '';
     }).filter(Boolean);
-    if (used.length) h += `<div class="small">3AB 支援人員使用：${used.join('、')}</div>`;
+    if (used.length) h += `<div class="small">支援人員使用：${used.join('、')}</div>`;
     const lentList = Object.keys(r.lent || {}).map((id) => { const p = S.staff.find((x) => x.id === id); return p ? `${esc(p.name)} ${r.lent[id]} 天` : ''; }).filter(Boolean);
-    if (lentList.length) h += `<div class="small">固定人員支援 3AB：${lentList.join('、')}（2A 不需要她們的日子）</div>`;
+    if (lentList.length) h += `<div class="small">固定人員借調（${CFG.lend}）：${lentList.join('、')}（本單位不需要她們的日子）</div>`;
     if ((r.rejected || []).length) {
       h += `<div class="issue">以下預假因當天人力不足被削減（特休優先，同類以先登記者優先），已由系統另排休息日：<br>` +
         r.rejected.map((q) => `${esc(q.name)} ${S.month}/${q.day} ${q.code}`).join('、') + '</div>';
     }
     (r.notes || []).forEach((n) => (h += `<div class="issue">${esc(n)}</div>`));
     if (!r.gaps.length && !(r.notes || []).length && !(r.rejected || []).length) h = '<div class="ok">已排滿，每班每天都有人。</div>' + h;
-    if (r.gaps.length) h += '<div class="small">缺人的日子，可以指定更多 3AB 支援人員（N2 以上），或調高「支援每人最多」天數，再按自動排班。</div>';
+    if (r.gaps.length) h += '<div class="small">缺人的日子，可以指定更多支援人員（N2 以上）、增加特約人員，或調高「支援每人最多」天數，再按自動排班。</div>';
     el.innerHTML = h;
   }
 
@@ -211,11 +217,12 @@
       const a = S.auto[p.id] || [];
       manual[p.id] = r.map((c, i) => (a[i] ? '' : c));
     });
-    const common = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { supportMaxDays: S.supportMax } };
+    const common = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { supportMaxDays: S.supportMax, coverage: CFG.coverage, requireSenior: CFG.requireSenior }, lendCode: CFG.lend };
     // 預假審核：特休優先，同類依登記先後；人力不足的預假被削減
     const pr = window.Solver.resolvePrebooks({ ...common, cells: manual, prebook: S.prebook });
     const res = window.Solver.autoSchedule({ ...common, cells: pr.cells, seed: S.seed });
     S.staff.forEach((p) => {
+      if (!res.cells[p.id]) return; // 特約人員不自動排
       S.cells[p.id] = res.cells[p.id];
       S.auto[p.id] = res.cells[p.id].map((c, i) => (!c || manual[p.id][i] ? 0 : pr.accepted[p.id][i] ? 2 : 1));
     });
@@ -245,6 +252,10 @@
     S.holidays = e.target.value.split(/[,，\s]+/).map(Number).filter((d) => d >= 1 && d <= nDays());
     recalcRest(); save(); render(false);
   };
+  const us = $('unit');
+  if (us) { us.value = UNIT; us.onchange = () => { try { localStorage.setItem('miaoli-unit', us.value); } catch (e) {} location.reload(); }; }
+  document.title = UNIT + ' 排班';
+  const h1u = document.getElementById('unitName'); if (h1u) h1u.textContent = UNIT;
   $('required').onchange = (e) => { S.requiredRest = Number(e.target.value); save(); render(false); };
   $('requestedAt').onchange = (e) => { S.requestedAt = e.target.value; save(); render(false); };
   document.querySelectorAll('.tabs button').forEach((b) => { b.onclick = () => { mode = b.dataset.mode; render(false); }; });

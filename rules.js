@@ -11,6 +11,8 @@
   // 「本月應休」計算採用的代碼（班表上的合計共休包含休假）
   const MONTH_REST = ['例', '休息', '國定', '補國', '補休', '休假']; // 特休、公假另計，不算在內
   const LEND = '3AB'; // 固定人員當天支援 3AB：算上班，不計入 2A 人力
+  const LENDS = ['3AB', '2A']; // 借調代碼：2A 人員標 3AB；3AB 人員借給 2A 標 2A。都算上班、不計入本單位人力
+  const isLend = (c) => LENDS.includes(c);
   const SUPPORT_LEVELS = ['N2', 'N3', 'N4'];
 
   const DEFAULTS = {
@@ -20,6 +22,15 @@
 
   const daysInMonth = (y, m) => new Date(y, m, 0).getDate();
   const dow = (y, m, d) => new Date(y, m - 1, d).getDay();
+  // 某班某天需要幾人：數字＝每天固定；{weekday, off}＝平日／週末與國定假日不同
+  function coverageNeed(coverage, shift, year, month, day, holidays) {
+    const v = (coverage || DEFAULTS.coverage)[shift];
+    if (v == null) return 1;
+    if (typeof v === 'number') return v;
+    const w = dow(year, month, day);
+    const off = w === 0 || w === 6 || (holidays || []).includes(day);
+    return off ? v.off : v.weekday;
+  }
   // 本月應休 = 日曆上的紅字日：週六、週日，加上落在平日的國定假日
   function redDays(year, month, holidays) {
     const n = daysInMonth(year, month);
@@ -49,8 +60,11 @@
     // R1 每班每天人數
     for (let d = 1; d <= n; d++) {
       for (const s of WORK) {
-        const c = staff.filter((p) => row(p)[d - 1] === s).length;
-        if (c !== P.coverage[s]) add('coverage', 'error', `${month}/${d} ${SHIFT_LABEL[s]} ${c} 人，應為 ${P.coverage[s]} 人`, null, d);
+        const who = staff.filter((p) => !p.extra && row(p)[d - 1] === s);
+        const c = who.length;
+        const want = coverageNeed(P.coverage, s, year, month, d, input.holidays);
+        if (c !== want) add('coverage', 'error', `${month}/${d} ${SHIFT_LABEL[s]} ${c} 人，應為 ${want} 人`, null, d);
+        if (P.requireSenior && c > 0 && !who.some((p) => SUPPORT_LEVELS.includes(p.level))) add('senior-mix', 'error', `${month}/${d} ${SHIFT_LABEL[s]} 沒有 N2 以上的人員`, null, d);
       }
     }
 
@@ -61,6 +75,7 @@
         if (WORK.includes(c) && c !== p.shift) add('pure-shift', 'error', `${p.name} ${month}/${i + 1} 排了 ${c}，本月班別應為 ${p.shift}`, p.id, i + 1);
       });
       // 支援人員（3AB 護理師）的例假、休息日由其所屬單位班表判斷，這裡只檢查班別與職級
+      if (p.extra) continue; // 特約人員：額外加入的人力，不套用休息規則、不計入每班人數
       if (p.support) {
         if (!SUPPORT_LEVELS.includes(p.level)) add('support-level', 'error', `${p.name} 是 ${p.level}，支援 2A 至少要 N2`, p.id, null);
         continue;
@@ -84,7 +99,7 @@
       let streak = p.prevStreak || 0;
       let flagged = false;
       r.forEach((c, i) => {
-        if (WORK.includes(c) || c === LEND) {
+        if (WORK.includes(c) || isLend(c)) {
           streak++;
           if (streak > P.maxConsecutive && !flagged) {
             add('consecutive', 'error', `${p.name} 到 ${month}/${i + 1} 已連續上班 ${streak} 天，上限 ${P.maxConsecutive} 天`, p.id, i + 1);
@@ -138,5 +153,5 @@
     return issues;
   }
 
-  return { WORK, LEGAL_REST, MONTH_REST, SUPPORT_LEVELS, DEFAULTS, daysInMonth, dow, redDays, checkSchedule, LEND, checkPrebook };
+  return { WORK, LEGAL_REST, MONTH_REST, SUPPORT_LEVELS, DEFAULTS, daysInMonth, dow, redDays, checkSchedule, LEND, LENDS, isLend, coverageNeed, checkPrebook };
 });

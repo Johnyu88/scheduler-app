@@ -17,6 +17,7 @@
   const LEGAL = R.LEGAL_REST;
   const DEFAULTS = { maxConsecutive: 6, softStreak: 5, supportMaxDays: 6 };
   const LEND = '3AB';
+  const isLend = R.isLend;
 
   function mulberry32(a) {
     return function () {
@@ -41,9 +42,14 @@
     let sundays = 0;
     for (let d = 1; d <= n; d++) if (R.dow(year, month, d) === 0) sundays++;
     return {
-      year, month, staff, n, sundays,
+      year, month, n, sundays,
       need: input.requiredRest == null ? 0 : input.requiredRest,
       holidays: new Set(input.holidays || []),
+      holidayList: input.holidays || [],
+      lend: input.lendCode || LEND,
+      coverage: (input.params || {}).coverage,
+      requireSenior: !!(input.params || {}).requireSenior,
+      staff: staff.filter((p) => !p.extra),
       P: Object.assign({}, DEFAULTS, input.params || {}),
     };
   }
@@ -51,8 +57,8 @@
   // 一位固定人員的限制條件
   function spec(ctx, p, row) {
     const { n, need } = ctx;
-    const fixedOff = row.map((c) => !!c && c !== p.shift && c !== LEND);
-    const forced = row.map((c) => c === p.shift || c === LEND);
+    const fixedOff = row.map((c) => !!c && c !== p.shift && !isLend(c));
+    const forced = row.map((c) => c === p.shift || isLend(c));
     const cnt = (a, b, f) => { let t = 0; for (let d = a; d <= b && d <= n; d++) if (f(row[d - 1], d - 1)) t++; return t; };
     const fixedRest = cnt(1, n, (c) => REST_CODES.includes(c));
     return {
@@ -132,20 +138,26 @@
     const core = ctx.staff.filter((p) => p.shift === shift && !p.support);
     const sups = ctx.staff.filter((p) => p.shift === shift && p.support);
     const specs = core.map((p) => spec(ctx, p, cells[p.id]));
-    const pools = specs.map((sp) => genPool(ctx, sp, rng, 40 * effort));
+    const poolSize = Math.min(160, 40 + 12 * core.length) * effort;
+    const pools = specs.map((sp) => genPool(ctx, sp, rng, poolSize));
     const failed = pools.findIndex((pl) => !pl.length);
     const supCap = sups.reduce((s, p) => s + Math.max(0, P.supportMaxDays - cells[p.id].filter((c) => c === shift).length), 0);
     const otherOff = opts.otherOff || new Array(n).fill(0);
 
     const presentOf = (sp, off, i) => !sp.fixedOff[i] && !off[i];
+    const reqAt = (i) => R.coverageNeed(ctx.coverage, shift, ctx.year, ctx.month, i + 1, ctx.holidayList);
+    const isSenior = (p) => R.SUPPORT_LEVELS.includes(p.level);
     const evalCombo = (combo) => {
-      let uncovered = 0, overlap = 0;
+      let uncovered = 0, overlap = 0, noSenior = 0;
       for (let i = 0; i < n; i++) {
-        if (!combo.some((o, k) => presentOf(specs[k], o, i))) uncovered++;
+        const pres = combo.map((o, k) => (presentOf(specs[k], o, i) ? k : -1)).filter((k) => k >= 0);
+        const short = Math.max(0, reqAt(i) - pres.length);
+        uncovered += short;
+        if (ctx.requireSenior && pres.length >= 1 && !pres.some((k) => isSenior(core[k]))) noSenior++;
         const offs = combo.filter((o, k) => !presentOf(specs[k], o, i)).length;
         overlap += offs * otherOff[i];
       }
-      return { uncovered, cost: 1000 * Math.max(0, uncovered - supCap) + 12 * uncovered + 25 * overlap };
+      return { uncovered, cost: 1000 * Math.max(0, uncovered - supCap) + 12 * uncovered + 25 * overlap + 400 * noSenior };
     };
 
     let best = null;
@@ -155,15 +167,35 @@
     if (!core.length) best = { combo: [], uncovered: n };
     else {
       const total = pools.reduce((s, pl) => s * pl.length, 1);
-      const tries = Math.min(total, 1500 * effort);
-      const pick = (k) => (total <= 1500 * effort ? null : Math.floor(rng() * pools[k].length));
-      for (let t = 0; t < tries; t++) {
-        let combo;
-        if (total <= 1500 * effort) { // 全部列舉
-          let idx = t; combo = pools.map((pl) => { const o = pl[idx % pl.length]; idx = Math.floor(idx / pl.length); return o; });
-        } else combo = pools.map((pl, k) => pl[pick(k)]);
-        const e = evalCombo(combo);
-        if (!best || e.cost < best.cost) best = { combo, cost: e.cost, uncovered: e.uncovered };
+      const limit = 1500 * effort;
+      if (total <= limit) { // 組合不多：全部列舉
+        for (let t = 0; t < total; t++) {
+          let idx = t; const combo = pools.map((pl) => { const o = pl[idx % pl.length]; idx = Math.floor(idx / pl.length); return o; });
+          const e = evalCombo(combo);
+          if (!best || e.cost < best.cost) best = { combo, cost: e.cost, uncovered: e.uncovered };
+        }
+      } else { // 組合太多：隨機起點 + 逐人換型態的爬山法
+        for (let r = 0; r < 4 * effort; r++) {
+          let combo = pools.map((pl) => pl[Math.floor(rng() * pl.length)]);
+          let cur = evalCombo(combo);
+          for (let sweep = 0; sweep < 8; sweep++) {
+            let improved = false;
+            const order = combo.map((_, k) => k).sort(() => rng() - 0.5);
+            for (const k of order) {
+              let bk = combo[k], bc = cur;
+              for (const o of pools[k]) {
+                if (o === combo[k]) continue;
+                const trial = combo.slice(); trial[k] = o;
+                const e = evalCombo(trial);
+                if (e.cost < bc.cost) { bc = e; bk = o; }
+              }
+              if (bk !== combo[k]) { combo = combo.slice(); combo[k] = bk; cur = bc; improved = true; }
+            }
+            if (!improved) break;
+          }
+          if (!best || cur.cost < best.cost) best = { combo, cost: cur.cost, uncovered: cur.uncovered };
+          if (best.uncovered === 0 && best.cost < 25 * 3) break;
+        }
       }
     }
 
@@ -171,24 +203,35 @@
     const rows = {};
     core.forEach((p) => (rows[p.id] = cells[p.id].slice()));
     const coverCount = core.map(() => 0);
-    let prevCover = -1;
-    const uncoveredDays = [];
+    let prevCover = [];
+    const uncoveredDays = []; // {i, short}
     for (let i = 0; i < n; i++) {
+      const need = reqAt(i);
       const present = core.map((p, k) => presentOf(specs[k], best.combo[k], i));
-      const forcedCover = core.findIndex((p, k) => cells[p.id][i] === shift);
-      let cover = -1;
-      if (forcedCover >= 0) cover = forcedCover;
-      else {
-        const cand = present.map((v, k) => (v ? k : -1)).filter((k) => k >= 0 && cells[core[k].id][i] !== LEND);
-        if (cand.length) cover = cand.includes(prevCover) && coverCount[prevCover] <= Math.min(...cand.map((k) => coverCount[k])) + 3 ? prevCover : cand.reduce((a, b) => (coverCount[b] < coverCount[a] ? b : a));
+      const covers = [];
+      core.forEach((p, k) => { if (cells[p.id][i] === shift) covers.push(k); });
+      const cand = present.map((v, k) => (v ? k : -1)).filter((k) => k >= 0 && !covers.includes(k) && !isLend(cells[core[k].id][i]));
+      const rank = (k) => coverCount[k] * 2 + (prevCover.includes(k) ? 0 : 1);
+      cand.sort((x, y) => rank(x) - rank(y));
+      const pickN = Math.max(0, need - covers.length);
+      const chosen = cand.slice(0, pickN);
+      if (ctx.requireSenior) { // 至少 1 位 N2 以上
+        const all = covers.concat(chosen);
+        if (all.length && !all.some((k) => isSenior(core[k]))) {
+          const s1 = cand.slice(pickN).find((k) => isSenior(core[k]));
+          if (s1 != null && chosen.length) chosen[chosen.length - 1] = s1;
+        }
       }
+      const allCover = covers.concat(chosen);
       core.forEach((p, k) => {
         if (cells[p.id][i]) return; // 固定格不動
         if (!present[k]) return; // 休息日留空，之後標例／休息
-        rows[p.id][i] = k === cover ? shift : LEND;
+        rows[p.id][i] = allCover.includes(k) ? shift : ctx.lend;
       });
-      if (cover >= 0) { coverCount[cover]++; prevCover = cover; }
-      else { uncoveredDays.push(i); prevCover = -1; }
+      allCover.forEach((k) => coverCount[k]++);
+      prevCover = allCover;
+      const short = need - allCover.length;
+      if (short > 0) uncoveredDays.push({ i, short });
     }
 
     // 支援人員補缺
@@ -198,13 +241,15 @@
     const supStreak = {};
     sups.forEach((p) => (supStreak[p.id] = 0));
     let lastDay = -2;
-    for (const i of uncoveredDays) {
-      const cand = sups.filter((p) => !cells[p.id][i] && supUsed[p.id] < P.supportMaxDays && (i === lastDay + 1 ? supStreak[p.id] + 1 : 1) <= P.maxConsecutive);
-      if (!cand.length) { gapDays.push(i + 1); lastDay = -2; sups.forEach((p) => (supStreak[p.id] = 0)); continue; }
-      cand.sort((a, b) => supUsed[a.id] - supUsed[b.id] || (supStreak[b.id] > 0 ? 1 : 0) - (supStreak[a.id] > 0 ? 1 : 0));
-      const s = cand[0];
-      rows[s.id][i] = shift; supUsed[s.id]++;
-      sups.forEach((p) => (supStreak[p.id] = p === s ? (i === lastDay + 1 ? supStreak[p.id] + 1 : 1) : 0));
+    for (const { i, short } of uncoveredDays) {
+      for (let q = 0; q < short; q++) {
+        const cand = sups.filter((p) => !cells[p.id][i] && rows[p.id][i] !== shift && supUsed[p.id] < P.supportMaxDays && (i === lastDay + 1 ? supStreak[p.id] + 1 : 1) <= P.maxConsecutive);
+        if (!cand.length) { gapDays.push(i + 1); continue; }
+        cand.sort((a, b) => supUsed[a.id] - supUsed[b.id] || (supStreak[b.id] > 0 ? 1 : 0) - (supStreak[a.id] > 0 ? 1 : 0));
+        const s = cand[0];
+        rows[s.id][i] = shift; supUsed[s.id]++;
+        sups.forEach((p) => (supStreak[p.id] = p === s ? (i === lastDay + 1 ? supStreak[p.id] + 1 : 1) : (rows[p.id][i] === shift ? supStreak[p.id] + 1 : 0)));
+      }
       lastDay = i;
     }
     // 回傳此班固定人員的休息日（給其他班別錯開用）
@@ -230,7 +275,7 @@
       const totalLi = fixedLi.reduce((s, v) => s + v, 0) + li.size;
       const rest = [].concat(U[2], U[1], U[0]).filter((d) => !li.has(d) && !holidays.has(d)).sort((a, b) => a - b);
       spread(rest, Math.max(0, sundays - totalLi)).forEach((d) => li.add(d));
-      const worked = [...holidays].filter((d) => row[d - 1] === p.shift || row[d - 1] === LEND).sort((a, b) => a - b);
+      const worked = [...holidays].filter((d) => row[d - 1] === p.shift || isLend(row[d - 1])).sort((a, b) => a - b);
       const plain = [].concat(U[0], U[1], U[2]).filter((d) => !li.has(d) && !holidays.has(d)).sort((a, b) => a - b);
       const later = worked.length ? plain.filter((d) => d > worked[0]) : [];
       const comp = new Set(spread(later.length >= worked.length ? later : plain, worked.length)); // 補休盡量排在國定日之後
@@ -255,7 +300,7 @@
     const notes = [];
     let otherOff = new Array(n).fill(0);
     for (const shift of WORK) {
-      const r = solveShift(ctx, shift, cells, { rng, otherOff });
+      const r = solveShift(ctx, shift, cells, { rng, otherOff, effort: input.effort || 3 });
       if (!r.ok) {
         const who = r.core.map((p) => p.name).join('、');
         notes.push(`${{ D: '白班', E: '小夜', N: '大夜' }[shift]}無法為 ${who} 排出合規的休息日（預假或已填的格子可能互相衝突）`);
@@ -267,7 +312,7 @@
       Object.keys(r.rows).forEach((id) => (out[id] = r.rows[id]));
       r.gapDays.forEach((d) => gaps.push({ day: d, shift }));
       r.sups.forEach((p) => (supportUsage[p.id] = r.supUsed[p.id]));
-      r.core.forEach((p) => { const c = out[p.id].filter((x) => x === LEND).length; if (c) lent[p.id] = c; });
+      r.core.forEach((p) => { const c = out[p.id].filter((x) => isLend(x)).length; if (c) lent[p.id] = c; });
       otherOff = otherOff.map((v, i) => v + (r.offs ? r.offs[i] : 0));
     }
     return { cells: out, gaps, supportUsage, lent, notes };
