@@ -74,7 +74,7 @@
   }
 
   function issuesNow() {
-    const params = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { coverage: CFG.coverage, requireSenior: CFG.requireSenior } };
+    const params = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { coverage: CFG.coverage, requireSenior: CFG.requireSenior }, incoming: S.incoming };
     return mode === 'schedule'
       ? R.checkSchedule({ ...params, cells: S.cells })
       : R.checkPrebook({ ...params, requestedAt: S.requestedAt, prebook: S.prebook });
@@ -201,6 +201,11 @@
       h += `<div class="issue">以下預假因當天人力不足被削減（特休優先，同類以先登記者優先），已由系統另排休息日：<br>` +
         r.rejected.map((q) => `${esc(q.name)} ${S.month}/${q.day} ${q.code}`).join('、') + '</div>';
     }
+    if ((r.loans || []).length) {
+      const byKey = {};
+      r.loans.forEach((l) => { const k = `${l.from}→${l.to} ${lab[l.shift]}`; byKey[k] = (byKey[k] || 0) + l.n; });
+      h += `<div class="small">借調（聯合排班）：${Object.keys(byKey).map((k) => `${k} ${byKey[k]} 人天`).join('；')}</div>`;
+    }
     (r.notes || []).forEach((n) => (h += `<div class="issue">${esc(n)}</div>`));
     if (!r.gaps.length && !(r.notes || []).length && !(r.rejected || []).length) h = '<div class="ok">已排滿，每班每天都有人。</div>' + h;
     if (r.gaps.length) h += '<div class="small">缺人的日子，可以指定更多支援人員（N2 以上）、增加特約人員，或調高「支援每人最多」天數，再按自動排班。</div>';
@@ -229,6 +234,45 @@
     S.autoReport = { gaps: res.gaps, supportUsage: res.supportUsage, lent: res.lent, notes: res.notes, rejected: pr.rejected };
     save(); render(false);
   }
+  // 聯合排班：兩個單位一起排，缺人的日子互相借人（也可以在借出方的班表手動標借調代碼）
+  function runJoint(newSeed) {
+    const other = UNIT === '3AB' ? '2A' : '3AB';
+    const okey = other === '3AB' ? 'miaoli-scheduler-3ab-v1' : 'miaoli-scheduler-2a-v1';
+    let O = null;
+    try { O = JSON.parse(localStorage.getItem(okey)); } catch (e) {}
+    const rep = $('autoReport');
+    if (!O || !O.staff || !O.staff.length) { rep.innerHTML = `<div class="issue">${other} 還沒有人員資料，請先切換到 ${other} 設定人員。</div>`; return; }
+    if (O.year !== S.year || O.month !== S.month) { rep.innerHTML = `<div class="issue">${other} 的月份是 ${O.year}/${O.month}，和這邊的 ${S.year}/${S.month} 不同，請先把兩邊調成同一個月。</div>`; return; }
+    if (newSeed) S.seed = (S.seed || 1) + 1;
+    const n = nDays();
+    const cfgOf = (u) => (u === '3AB' ? { coverage: { D: { weekday: 7, off: 6 }, E: 5, N: 4 }, lend: '2A', requireSenior: true, lendNeedsSenior: true } : { coverage: { D: 1, E: 1, N: 1 }, lend: '3AB', requireSenior: false, lendNeedsSenior: false });
+    const build = (u, st) => {
+      const c = cfgOf(u);
+      const manual = {};
+      st.staff.forEach((p) => { const r = (st.cells && st.cells[p.id]) || []; const au = (st.auto && st.auto[p.id]) || []; manual[p.id] = Array.from({ length: n }, (_, i) => (au[i] ? '' : r[i] || '')); });
+      const base = { name: u, year: st.year, month: st.month, staff: st.staff, requiredRest: st.requiredRest, holidays: st.holidays || [], params: { supportMaxDays: st.supportMax == null ? 6 : st.supportMax, coverage: c.coverage, requireSenior: c.requireSenior }, lendCode: c.lend, lendNeedsSenior: c.lendNeedsSenior, seed: st.seed || 1 };
+      const pr = window.Solver.resolvePrebooks({ ...base, cells: manual, prebook: st.prebook || {} });
+      return { manual, pr, unit: { ...base, cells: pr.cells, auto: {} }, c };
+    };
+    const mine = build(UNIT, S), theirs = build(other, O);
+    const j = window.Solver.jointSchedule(UNIT === '2A' ? [mine.unit, theirs.unit] : [theirs.unit, mine.unit]);
+    const resOf = (u) => (u === '2A' ? j.A : j.B);
+    const apply = (st, b, res) => {
+      if (!st.cells) st.cells = {}; if (!st.auto) st.auto = {};
+      st.staff.forEach((p) => {
+        if (!res.cells[p.id]) return;
+        st.cells[p.id] = res.cells[p.id];
+        st.auto[p.id] = res.cells[p.id].map((c, i) => (!c || b.manual[p.id][i] ? 0 : b.pr.accepted[p.id][i] ? 2 : 1));
+      });
+      st.incoming = res.incoming;
+      st.autoReport = { gaps: res.gaps, supportUsage: res.supportUsage, lent: res.lent, notes: res.notes, rejected: b.pr.rejected, loans: j.loans };
+    };
+    apply(S, mine, resOf(UNIT)); apply(O, theirs, resOf(other));
+    try { localStorage.setItem(okey, JSON.stringify(O)); } catch (e) {}
+    save(); render(false);
+  }
+  const jb = $('jointRun');
+  if (jb) jb.onclick = () => { const t = jb.textContent; jb.textContent = '排班中…'; jb.disabled = true; setTimeout(() => { try { runJoint(false); } finally { jb.textContent = t; jb.disabled = false; } }, 30); };
   $('supportMax').onchange = (e) => { S.supportMax = Math.max(0, Number(e.target.value) || 0); save(); };
   $('autoRun').onclick = () => runAuto(false);
   $('autoAgain').onclick = () => runAuto(true);

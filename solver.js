@@ -47,6 +47,9 @@
       holidays: new Set(input.holidays || []),
       holidayList: input.holidays || [],
       lend: input.lendCode || LEND,
+      lendNeedsSenior: !!input.lendNeedsSenior,
+      out: input.out || {}, // 要借給另一單位的人數：{D:[每天],E:[],N:[]}
+      incoming: input.incoming || {}, // 另一單位已確定借來的人數（手動或自動）
       coverage: (input.params || {}).coverage,
       requireSenior: !!(input.params || {}).requireSenior,
       staff: staff.filter((p) => !p.extra),
@@ -145,19 +148,26 @@
     const otherOff = opts.otherOff || new Array(n).fill(0);
 
     const presentOf = (sp, off, i) => !sp.fixedOff[i] && !off[i];
-    const reqAt = (i) => R.coverageNeed(ctx.coverage, shift, ctx.year, ctx.month, i + 1, ctx.holidayList);
+    const incAt = (i) => ((ctx.incoming[shift] || [])[i] || 0);
+    const outAt = (i) => ((ctx.out[shift] || [])[i] || 0);
+    const ownAt = (i) => Math.max(0, R.coverageNeed(ctx.coverage, shift, ctx.year, ctx.month, i + 1, ctx.holidayList) - incAt(i));
+    const reqAt = (i) => ownAt(i) + outAt(i);
     const isSenior = (p) => R.SUPPORT_LEVELS.includes(p.level);
     const evalCombo = (combo) => {
-      let uncovered = 0, overlap = 0, noSenior = 0;
+      let uncovered = 0, overlap = 0, noSenior = 0, ownShort = 0, outShort = 0;
       for (let i = 0; i < n; i++) {
         const pres = combo.map((o, k) => (presentOf(specs[k], o, i) ? k : -1)).filter((k) => k >= 0);
-        const short = Math.max(0, reqAt(i) - pres.length);
-        uncovered += short;
+        const own = ownAt(i);
+        const os = Math.max(0, own - pres.length);
+        ownShort += os;
+        outShort += Math.max(0, own + outAt(i) - pres.length) - os;
         if (ctx.requireSenior && pres.length >= 1 && !pres.some((k) => isSenior(core[k]))) noSenior++;
         const offs = combo.filter((o, k) => !presentOf(specs[k], o, i)).length;
         overlap += offs * otherOff[i];
       }
-      return { uncovered, cost: 1000 * Math.max(0, uncovered - supCap) + 12 * uncovered + 25 * overlap + 400 * noSenior };
+      uncovered = ownShort + outShort;
+      // 本單位自己缺人最重；借給另一單位的缺口次之
+      return { uncovered, cost: 1000 * Math.max(0, ownShort - supCap) + 12 * ownShort + 300 * outShort + 25 * overlap + 400 * noSenior };
     };
 
     let best = null;
@@ -203,6 +213,9 @@
     const rows = {};
     core.forEach((p) => (rows[p.id] = cells[p.id].slice()));
     const coverCount = core.map(() => 0);
+    const lendCnt = new Array(n).fill(0);
+    const coverLen = new Array(n).fill(0);
+    const supFilled = new Array(n).fill(0);
     let prevCover = [];
     const uncoveredDays = []; // {i, short}
     for (let i = 0; i < n; i++) {
@@ -223,10 +236,25 @@
         }
       }
       const allCover = covers.concat(chosen);
+      // 超出本單位需要的人數 = 借給另一單位的人；盡量借出 N2 以上（若規定），並保留本單位至少 1 位 N2 以上
+      let lendSel = [];
+      const L = Math.max(0, allCover.length - ownAt(i));
+      if (L > 0) {
+        const pool = chosen.slice();
+        for (let q = 0; q < L && pool.length; q++) {
+          const keepsSenior = (k) => !ctx.requireSenior || allCover.filter((x) => x !== k && !lendSel.includes(x)).some((x) => isSenior(core[x]));
+          const ok = pool.filter(keepsSenior);
+          const pref = ok.filter((k) => (ctx.lendNeedsSenior ? isSenior(core[k]) : true));
+          const pickK = (pref.length ? pref : ok.length ? ok : pool)[0];
+          lendSel.push(pickK); pool.splice(pool.indexOf(pickK), 1);
+        }
+      }
+      const ownCover = allCover.filter((k) => !lendSel.includes(k));
+      lendCnt[i] = lendSel.length; coverLen[i] = allCover.length;
       core.forEach((p, k) => {
         if (cells[p.id][i]) return; // 固定格不動
         if (!present[k]) return; // 休息日留空，之後標例／休息
-        rows[p.id][i] = allCover.includes(k) ? shift : ctx.lend;
+        rows[p.id][i] = ownCover.includes(k) ? shift : ctx.lend;
       });
       allCover.forEach((k) => coverCount[k]++);
       prevCover = allCover;
@@ -244,18 +272,23 @@
     for (const { i, short } of uncoveredDays) {
       for (let q = 0; q < short; q++) {
         const cand = sups.filter((p) => !cells[p.id][i] && rows[p.id][i] !== shift && supUsed[p.id] < P.supportMaxDays && (i === lastDay + 1 ? supStreak[p.id] + 1 : 1) <= P.maxConsecutive);
-        if (!cand.length) { gapDays.push(i + 1); continue; }
+        if (!cand.length) continue;
         cand.sort((a, b) => supUsed[a.id] - supUsed[b.id] || (supStreak[b.id] > 0 ? 1 : 0) - (supStreak[a.id] > 0 ? 1 : 0));
         const s = cand[0];
-        rows[s.id][i] = shift; supUsed[s.id]++;
+        rows[s.id][i] = shift; supUsed[s.id]++; supFilled[i]++;
         sups.forEach((p) => (supStreak[p.id] = p === s ? (i === lastDay + 1 ? supStreak[p.id] + 1 : 1) : (rows[p.id][i] === shift ? supStreak[p.id] + 1 : 0)));
       }
       lastDay = i;
     }
+    const ownGap = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      ownGap[i] = Math.max(0, ownAt(i) - (coverLen[i] - lendCnt[i]) - supFilled[i]);
+      for (let q = 0; q < ownGap[i]; q++) gapDays.push(i + 1);
+    }
     // 回傳此班固定人員的休息日（給其他班別錯開用）
     const offs = new Array(n).fill(0);
     core.forEach((p, k) => { for (let i = 0; i < n; i++) if (!presentOf(specs[k], best.combo[k], i)) offs[i]++; });
-    return { ok: true, gaps: gapDays.length, gapDays, rows, specs, core, sups, supUsed, offs };
+    return { ok: true, gaps: gapDays.length, gapDays, rows, specs, core, sups, supUsed, offs, ownGap, lendCnt };
   }
 
   // 把固定人員的休息日標成 例 / 國定 / 補休 / 休息
@@ -298,6 +331,7 @@
     const supportUsage = {};
     const lent = {};
     const notes = [];
+    const gapMap = {}, lentMap = {};
     let otherOff = new Array(n).fill(0);
     for (const shift of WORK) {
       const r = solveShift(ctx, shift, cells, { rng, otherOff, effort: input.effort || 3 });
@@ -311,11 +345,70 @@
       labelRests(ctx, r.rows, r.core);
       Object.keys(r.rows).forEach((id) => (out[id] = r.rows[id]));
       r.gapDays.forEach((d) => gaps.push({ day: d, shift }));
+      gapMap[shift] = r.ownGap;
+      lentMap[shift] = new Array(n).fill(0); // 系統自動借出（合格者）的人數
+      r.core.forEach((p) => out[p.id].forEach((c, i) => {
+        if (c === ctx.lend && !cells[p.id][i] && (!ctx.lendNeedsSenior || R.SUPPORT_LEVELS.includes(p.level))) lentMap[shift][i]++;
+      }));
       r.sups.forEach((p) => (supportUsage[p.id] = r.supUsed[p.id]));
       r.core.forEach((p) => { const c = out[p.id].filter((x) => isLend(x)).length; if (c) lent[p.id] = c; });
       otherOff = otherOff.map((v, i) => v + (r.offs ? r.offs[i] : 0));
     }
-    return { cells: out, gaps, supportUsage, lent, notes };
+    return { cells: out, gaps, supportUsage, lent, notes, gapMap, lentMap };
+  }
+
+  // 兩個單位一起排：A 缺人的日子由 B 借人，B 缺人由 A 借；也接受手動借調（借出方在自己的班表直接標借調代碼）
+  // units = [{ name, ...autoSchedule 的輸入, lendCode, lendNeedsSenior }, 另一單位]
+  function jointSchedule(units, opts) {
+    opts = opts || {};
+    const [A, B] = units;
+    const n = R.daysInMonth(A.year, A.month);
+    const zero = () => ({ D: new Array(n).fill(0), E: new Array(n).fill(0), N: new Array(n).fill(0) });
+    // 手動借調：借出方人員手動標的借調代碼，視為借給對方同班別的人力
+    const manualIn = (from, to) => {
+      const m = zero();
+      (from.staff || []).forEach((p) => {
+        if (p.extra || !m[p.shift]) return;
+        const row = (from.cells || {})[p.id] || [];
+        row.forEach((c, i) => { if (c === from.lendCode && !((from.auto || {})[p.id] || [])[i] && i < n) m[p.shift][i]++; });
+      });
+      return m;
+    };
+    const mA = manualIn(B, A), mB = manualIn(A, B); // mA：B 手動借給 A 的人數
+    const keepManual = (u) => { // 只保留手動填的格子，系統上次排的重算
+      const cells = {};
+      (u.staff || []).forEach((p) => { const r = ((u.cells || {})[p.id] || []).slice(0, n); const a = ((u.auto || {})[p.id]) || []; cells[p.id] = r.map((c, i) => (a[i] ? '' : c)); });
+      return cells;
+    };
+    const cA = keepManual(A), cB = keepManual(B);
+    let outA = zero(), outB = zero(); // 要借給對方的人數
+    let rA, rB;
+    for (let round = 0; round < 3; round++) {
+      rA = autoSchedule({ ...A, cells: cA, incoming: mA, out: outA });
+      rB = autoSchedule({ ...B, cells: cB, incoming: mB, out: outB });
+      const nA = zero(), nB = zero(); // A 缺的 → B 借出；B 缺的 → A 借出
+      WORK.forEach((s) => { for (let i = 0; i < n; i++) { nB[s][i] = (rA.gapMap[s] || [])[i] || 0; nA[s][i] = (rB.gapMap[s] || [])[i] || 0; } });
+      const same = JSON.stringify(nA) === JSON.stringify(outA) && JSON.stringify(nB) === JSON.stringify(outB);
+      outA = nA; outB = nB;
+      if (same) break;
+    }
+    // 實際借到的人數 = min(對方缺口, 對方可借出的合格人數)；沒借到的才是真正缺人
+    const loans = [];
+    const gapsA = [], gapsB = [];
+    const incA = zero(), incB = zero();
+    WORK.forEach((s) => {
+      for (let i = 0; i < n; i++) {
+        const gA = ((rA.gapMap[s] || [])[i]) || 0, gB = ((rB.gapMap[s] || [])[i]) || 0;
+        const fromB = Math.min(gA, (rB.lentMap[s] || [])[i] || 0), fromA = Math.min(gB, (rA.lentMap[s] || [])[i] || 0);
+        if (fromB) { incA[s][i] = fromB; loans.push({ from: B.name, to: A.name, shift: s, day: i + 1, n: fromB }); }
+        if (fromA) { incB[s][i] = fromA; loans.push({ from: A.name, to: B.name, shift: s, day: i + 1, n: fromA }); }
+        for (let q = 0; q < gA - fromB; q++) gapsA.push({ day: i + 1, shift: s });
+        for (let q = 0; q < gB - fromA; q++) gapsB.push({ day: i + 1, shift: s });
+      }
+    });
+    const addManual = (inc, man) => WORK.forEach((s) => { for (let i = 0; i < n; i++) inc[s][i] += man[s][i]; });
+    addManual(incA, mA); addManual(incB, mB);
+    return { A: { ...rA, gaps: gapsA, incoming: incA }, B: { ...rB, gaps: gapsB, incoming: incB }, loans };
   }
 
   // 預假審核：特休優先，同類依登記先後；會讓當班缺人增加（或排不出合規休息日）的預假予以削減
@@ -354,5 +447,5 @@
     return { cells, accepted, rejected };
   }
 
-  return { autoSchedule, resolvePrebooks, DEFAULTS, LEND };
+  return { autoSchedule, jointSchedule, resolvePrebooks, DEFAULTS, LEND };
 });

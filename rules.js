@@ -47,6 +47,7 @@
   function checkSchedule(input) {
     const { year, month, staff, cells, requiredRest } = input;
     const P = Object.assign({}, DEFAULTS, input.params || {});
+    if (input.incoming) P.incoming = input.incoming; // 另一單位借來的人數：{D:[每天],E:[],N:[]}
     P.coverage = Object.assign({}, DEFAULTS.coverage, (input.params || {}).coverage);
     const n = daysInMonth(year, month);
     const issues = [];
@@ -62,7 +63,7 @@
       for (const s of WORK) {
         const who = staff.filter((p) => !p.extra && row(p)[d - 1] === s);
         const c = who.length;
-        const want = coverageNeed(P.coverage, s, year, month, d, input.holidays);
+        const want = Math.max(0, coverageNeed(P.coverage, s, year, month, d, input.holidays) - (((P.incoming || {})[s] || [])[d - 1] || 0));
         if (c !== want) add('coverage', 'error', `${month}/${d} ${SHIFT_LABEL[s]} ${c} 人，應為 ${want} 人`, null, d);
         if (P.requireSenior && c > 0 && !who.some((p) => SUPPORT_LEVELS.includes(p.level))) add('senior-mix', 'error', `${month}/${d} ${SHIFT_LABEL[s]} 沒有 N2 以上的人員`, null, d);
       }
