@@ -319,7 +319,7 @@
     });
     save(); mode = 'schedule'; render(false);
   });
-  $('exportJson').onclick = () => download('schedule.json', JSON.stringify(S, null, 2), 'application/json');
+  $('exportJson').onclick = () => download(`schedule-${UNIT}-${S.year}-${S.month}.json`, JSON.stringify({ ...S, unit: UNIT }, null, 2), 'application/json');
   $('exportCsv').onclick = () => {
     const n = nDays();
     const head = ['姓名', ...Array.from({ length: n }, (_, i) => `${S.month}/${i + 1}`)];
@@ -330,7 +330,19 @@
   $('importJson').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
     const rd = new FileReader();
-    rd.onload = () => { try { S = JSON.parse(rd.result); save(); render(); } catch (err) { alert('檔案格式不正確'); } };
+    rd.onload = () => {
+      try {
+        const obj = JSON.parse(rd.result);
+        if (!obj || !Array.isArray(obj.staff)) throw new Error('bad');
+        const u = obj.unit === '3AB' || obj.unit === '2A' ? obj.unit : UNIT; // 檔案標明單位就載入到該單位
+        if (u !== UNIT) {
+          const k = u === '3AB' ? 'miaoli-scheduler-3ab-v1' : 'miaoli-scheduler-2a-v1';
+          localStorage.setItem(k, JSON.stringify(obj)); localStorage.setItem('miaoli-unit', u);
+          alert(`這是 ${u} 的檔案，已載入到 ${u}，頁面將切換過去。`); location.reload(); return;
+        }
+        S = obj; save(); render();
+      } catch (err) { alert('檔案格式不正確'); }
+    };
     rd.readAsText(f);
   };
   function download(name, text, type) {
