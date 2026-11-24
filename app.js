@@ -138,14 +138,12 @@
   }
 
   function renderStaff() {
-    let h = `<tr><th>姓名</th><th>職級</th><th>本月班</th><th>支援</th><th>${UNIT === '3AB' ? '支援2A' : '支援3AB'}</th><th>特約</th><th>上月班</th><th>預假登記日</th><th></th></tr>`;
+    let h = `<tr><th>姓名</th><th>職級</th><th>本月班</th><th>${UNIT === '3AB' ? '支援2A' : '支援3AB'}</th><th>上月班</th><th>預假登記日</th><th></th></tr>`;
     S.staff.forEach((p, i) => {
       h += `<tr><td><input type="text" data-i="${i}" data-k="name" value="${esc(p.name)}"></td>
       <td><select data-i="${i}" data-k="level">${LEVELS.map((l) => `<option ${l === p.level ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
       <td><select data-i="${i}" data-k="shift">${['D', 'E', 'N'].map((l) => `<option ${l === p.shift ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
-      <td><input type="checkbox" data-i="${i}" data-k="support" ${p.support ? 'checked' : ''}></td>
       <td><input type="checkbox" data-i="${i}" data-k="lendable" ${p.lendable ? 'checked' : ''}></td>
-      <td><input type="checkbox" data-i="${i}" data-k="extra" ${p.extra ? 'checked' : ''}></td>
       <td><select data-i="${i}" data-k="prevShift">${['', 'D', 'E', 'N'].map((l) => `<option ${l === p.prevShift ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
       <td><input type="date" data-i="${i}" data-k="prebookAt" value="${p.prebookAt || ''}" style="width:130px"></td>
       <td><button data-del="${i}">刪</button></td></tr>`;
