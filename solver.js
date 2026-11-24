@@ -231,7 +231,7 @@
       const covers = [];
       core.forEach((p, k) => { if (cells[p.id][i] === shift) covers.push(k); });
       const cand = present.map((v, k) => (v ? k : -1)).filter((k) => k >= 0 && !covers.includes(k) && !isLend(cells[core[k].id][i]));
-      const rank = (k) => coverCount[k] * 2 + (prevCover.includes(k) ? 0 : 1);
+      const rank = (k) => coverCount[k] * 2 + (prevCover.includes(k) ? 0 : 1) + (ctx.lendOnly && core[k].lendable ? 1000 : 0); // 多出來的人盡量是可借調的人，才有地方去
       cand.sort((x, y) => rank(x) - rank(y));
       const pickN = Math.max(0, need - covers.length);
       const chosen = cand.slice(0, pickN);
@@ -270,7 +270,7 @@
       core.forEach((p, k) => {
         if (cells[p.id][i]) return; // 固定格不動
         if (!present[k]) return; // 休息日留空，之後標例／休息
-        rows[p.id][i] = ownCover.includes(k) || !canLend(k) ? shift : ctx.lend;
+        rows[p.id][i] = ownCover.includes(k) ? shift : canLend(k) ? ctx.lend : '特休'; // 多餘的人：可借調→支援另一單位；否則休假
       });
       allCover.forEach((k) => coverCount[k]++);
       prevCover = allCover;
