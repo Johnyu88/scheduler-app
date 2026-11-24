@@ -62,9 +62,10 @@
     for (let d = 1; d <= n; d++) {
       for (const s of WORK) {
         const who = staff.filter((p) => !p.extra && row(p)[d - 1] === s);
+        const ex = staff.filter((p) => p.extra && row(p)[d - 1] === s).length; // 特約人員：額外人力，人力不足時可補上
         const c = who.length;
         const want = Math.max(0, coverageNeed(P.coverage, s, year, month, d, input.holidays) - (((P.incoming || {})[s] || [])[d - 1] || 0));
-        if (c !== want) add('coverage', 'error', `${month}/${d} ${SHIFT_LABEL[s]} ${c} 人，應為 ${want} 人`, null, d);
+        if (c > want || (c < want && c + ex < want)) add('coverage', 'error', `${month}/${d} ${SHIFT_LABEL[s]} ${c} 人，應為 ${want} 人`, null, d);
         if (P.requireSenior && c > 0 && !who.some((p) => SUPPORT_LEVELS.includes(p.level))) add('senior-mix', 'error', `${month}/${d} ${SHIFT_LABEL[s]} 沒有 N2 以上的人員`, null, d);
       }
     }
@@ -76,7 +77,6 @@
         if (WORK.includes(c) && c !== p.shift) add('pure-shift', 'error', `${p.name} ${month}/${i + 1} 排了 ${c}，本月班別應為 ${p.shift}`, p.id, i + 1);
       });
       // 支援人員（3AB 護理師）的例假、休息日由其所屬單位班表判斷，這裡只檢查班別與職級
-      if (p.extra) continue; // 特約人員：額外加入的人力，不套用休息規則、不計入每班人數
       if (p.support) {
         if (!SUPPORT_LEVELS.includes(p.level)) add('support-level', 'error', `${p.name} 是 ${p.level}，支援 2A 至少要 N2`, p.id, null);
         continue;
@@ -116,15 +116,31 @@
           add('min-work-run', 'error', `${p.name} ${month}/${i + 1} 只上 1 天班就休息，班至少要連上 2 天`, p.id, i + 1);
         }
       }
+      // R6d 除非有預約假（或特休、公假、國定假日），否則不排連休 3 天以上
+      {
+        const pb = ((input.prebook || {})[p.id] || []);
+        let i = 0;
+        while (i < r.length) {
+          if (!REST_ALL.includes(r[i])) { i++; continue; }
+          let j = i; while (j + 1 < r.length && REST_ALL.includes(r[j + 1])) j++;
+          if (j - i + 1 >= 3) {
+            let booked = false;
+            for (let k = i; k <= j; k++) if (pb[k] || ['特休', '公假', '國定', '補國'].includes(r[k])) booked = true;
+            if (!booked) add('long-rest', 'error', `${p.name} ${month}/${i + 1}–${month}/${j + 1} 連休 ${j - i + 1} 天，沒有預約假不排連休 3 天以上`, p.id, i + 1);
+          }
+          i = j + 1;
+        }
+      }
       // R6c 每月至少有一次連續休息 2 天
       if (r.every((c) => c) && !r.some((c, i) => i > 0 && REST_ALL.includes(c) && REST_ALL.includes(r[i - 1]))) {
         add('rest-pair', 'error', `${p.name} 本月沒有連續休息 2 天`, p.id, null);
       }
       // R7 本月應休天數
-      if (requiredRest != null) {
+      const reqRest = p.restDays != null ? p.restDays : requiredRest; // 特約人員可以單獨設定休息天數（restDays）
+      if (reqRest != null) {
         const c = count(r, MONTH_REST);
-        if (c < requiredRest) add('monthly-rest', 'error', `${p.name} 本月休 ${c} 日，應休 ${requiredRest} 日`, p.id, null);
-        if (c > requiredRest) add('monthly-rest', 'error', `${p.name} 本月休 ${c} 日，超過應休 ${requiredRest} 日（要多休請用特休）`, p.id, null);
+        if (c < reqRest) add('monthly-rest', 'error', `${p.name} 本月休 ${c} 日，應休 ${reqRest} 日`, p.id, null);
+        if (c > reqRest) add('monthly-rest', 'error', `${p.name} 本月休 ${c} 日，超過應休 ${reqRest} 日（要多休請用特休）`, p.id, null);
       }
       // R8 支援人員職級
       if (p.support && !SUPPORT_LEVELS.includes(p.level)) {

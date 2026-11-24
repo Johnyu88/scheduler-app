@@ -74,7 +74,7 @@
   }
 
   function issuesNow() {
-    const params = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { coverage: CFG.coverage, requireSenior: CFG.requireSenior }, incoming: S.incoming };
+    const params = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { coverage: CFG.coverage, requireSenior: CFG.requireSenior }, incoming: S.incoming, prebook: S.prebook };
     return mode === 'schedule'
       ? R.checkSchedule({ ...params, cells: S.cells })
       : R.checkPrebook({ ...params, requestedAt: S.requestedAt, prebook: S.prebook });
