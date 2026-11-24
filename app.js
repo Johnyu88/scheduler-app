@@ -229,7 +229,7 @@
     S.staff.forEach((p) => {
       if (!res.cells[p.id]) return; // 特約人員不自動排
       S.cells[p.id] = res.cells[p.id];
-      S.auto[p.id] = res.cells[p.id].map((c, i) => (!c || manual[p.id][i] ? 0 : pr.accepted[p.id][i] ? 2 : 1));
+      S.auto[p.id] = res.cells[p.id].map((c, i) => (!c || manual[p.id][i] ? 0 : ((pr.accepted[p.id] || [])[i]) ? 2 : 1));
     });
     S.autoReport = { gaps: res.gaps, supportUsage: res.supportUsage, lent: res.lent, notes: res.notes, rejected: pr.rejected };
     save(); render(false);
@@ -262,7 +262,7 @@
       st.staff.forEach((p) => {
         if (!res.cells[p.id]) return;
         st.cells[p.id] = res.cells[p.id];
-        st.auto[p.id] = res.cells[p.id].map((c, i) => (!c || b.manual[p.id][i] ? 0 : b.pr.accepted[p.id][i] ? 2 : 1));
+        st.auto[p.id] = res.cells[p.id].map((c, i) => (!c || b.manual[p.id][i] ? 0 : ((b.pr.accepted[p.id] || [])[i]) ? 2 : 1));
       });
       st.incoming = res.incoming;
       st.autoReport = { gaps: res.gaps, supportUsage: res.supportUsage, lent: res.lent, notes: res.notes, rejected: b.pr.rejected, loans: j.loans };
