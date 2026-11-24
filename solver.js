@@ -84,9 +84,9 @@
     const need1 = Math.max(0, 2 - sp.fixedLi1);
     const need2 = Math.max(0, 2 - sp.fixedLi2);
     let nodes = 0;
-    const rec = (d, used, streak, b1, b2, o28) => {
-      if (++nodes > 4000) return false;
-      if (d > n) return used === sp.Rn;
+    const rec = (d, used, streak, b1, b2, o28, prevRest, pair) => {
+      if (++nodes > 6000) return false;
+      if (d > n) return used === sp.Rn && pair;
       if (d === 15 && b1 < need1) return false;
       if (n >= 28 && d === 29 && (b2 < need2 || o28 + sp.fixedLegal28 < 8)) return false;
       const left = freeLeft(d, n);
@@ -97,10 +97,13 @@
         if (o28 + freeLeft(d, 28) + sp.fixedLegal28 < 8) return false;
       }
       const i = d - 1;
-      if (sp.fixedOff[i]) return rec(d + 1, used, 0, b1, b2, o28);
-      if (sp.forced[i]) return streak + 1 > P.maxConsecutive ? false : rec(d + 1, used, streak + 1, b1, b2, o28);
+      if (sp.fixedOff[i]) {
+        if (streak === 1 && d > 2) return false; // 上 1 天班就休息
+        return rec(d + 1, used, 0, b1, b2, o28, true, pair || prevRest);
+      }
+      if (sp.forced[i]) return streak + 1 > P.maxConsecutive ? false : rec(d + 1, used, streak + 1, b1, b2, o28, false, pair);
       const canOn = streak + 1 <= P.maxConsecutive && !(d === 1 && sp.blocked1);
-      const canOff = used < sp.Rn;
+      const canOff = used < sp.Rn && !(streak === 1 && d > 2); // 班至少連上 2 天
       const base = left ? (sp.Rn - used) / left : 0;
       const pOff = streak >= P.softStreak ? 0.9 : streak < 2 ? base * 0.3 : base;
       const opts = [];
@@ -108,16 +111,16 @@
       if (canOff) opts.push('off');
       if (opts.length === 2 && rng() < pOff) opts.reverse();
       for (const o of opts) {
-        if (o === 'on') { if (rec(d + 1, used, streak + 1, b1, b2, o28)) return true; }
+        if (o === 'on') { if (rec(d + 1, used, streak + 1, b1, b2, o28, false, pair)) return true; }
         else {
           off[i] = true;
-          if (rec(d + 1, used + 1, 0, b1 + (d <= 14 ? 1 : 0), b2 + (d >= 15 && d <= 28 ? 1 : 0), o28 + (d <= 28 ? 1 : 0))) return true;
+          if (rec(d + 1, used + 1, 0, b1 + (d <= 14 ? 1 : 0), b2 + (d >= 15 && d <= 28 ? 1 : 0), o28 + (d <= 28 ? 1 : 0), true, pair || prevRest)) return true;
           off[i] = false;
         }
       }
       return false;
     };
-    return rec(1, 0, sp.streak0, 0, 0, 0) ? off.slice() : null;
+    return rec(1, 0, sp.streak0, 0, 0, 0, false, false) ? off.slice() : null;
   }
 
   function genPool(ctx, sp, rng, m) {

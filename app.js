@@ -326,6 +326,19 @@
     const lines = [head, ...S.staff.map((p) => [p.name, ...rowOf0(p.id, n)])].map((r) => r.join(','));
     download(`schedule-${S.year}-${S.month}.csv`, '﻿' + lines.join('\n'), 'text/csv');
   };
+  // 匯出 Excel：版面仿照護理長現行班表（每人兩列：上列班別、下列借調標記，右側統計休假天數）
+  $('exportXlsx').onclick = () => {
+    const bytes = window.Xlsx.workbook([window.Xlsx.scheduleSheet(S, UNIT)]);
+    download(`${UNIT}-${S.year - 1911}年${S.month}月班表.xlsx`, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  };
+  $('exportXlsx2').onclick = () => {
+    const other = UNIT === '3AB' ? '2A' : '3AB';
+    let O = null;
+    try { O = JSON.parse(localStorage.getItem(other === '3AB' ? 'miaoli-scheduler-3ab-v1' : 'miaoli-scheduler-2a-v1')); } catch (e) {}
+    if (!O || !O.staff || !O.staff.length || O.year !== S.year || O.month !== S.month) { alert(`${other} 沒有同一個月的資料，請先在 ${other} 排好班（或匯入）。`); return; }
+    const sheets = UNIT === '2A' ? [window.Xlsx.scheduleSheet(S, '2A'), window.Xlsx.scheduleSheet(O, '3AB')] : [window.Xlsx.scheduleSheet(O, '2A'), window.Xlsx.scheduleSheet(S, '3AB')];
+    download(`2A+3AB-${S.year - 1911}年${S.month}月班表.xlsx`, window.Xlsx.workbook(sheets), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  };
   const rowOf0 = (id, n) => { const r = (S.cells[id] || []).slice(0, n); while (r.length < n) r.push(''); return r; };
   $('importJson').onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;

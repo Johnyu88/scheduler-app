@@ -119,6 +119,8 @@
     <div class="row">
       <button id="exportJson">匯出 JSON</button>
       <button id="exportCsv">匯出 CSV</button>
+      <button id="exportXlsx" class="primary">匯出 Excel</button>
+      <button id="exportXlsx2">匯出 Excel（2A＋3AB 兩張）</button>
       <label>匯入 <input type="file" id="importJson" accept=".json"></label>
     </div>
   </div>
@@ -126,6 +128,7 @@
 <script src="rules.js"></script>
 <script src="holidays.js"></script>
 <script src="solver.js"></script>
+<script src="xlsx.js"></script>
 <script src="app.js"></script>
 <script>
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {

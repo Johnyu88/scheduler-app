@@ -108,6 +108,18 @@
           }
         } else { streak = 0; flagged = false; }
       });
+      // R6b 班至少連上 2 天：不得出現「上 1 天班就休息」（月初、月底的一天受前後月影響，不檢查）
+      const REST_ALL = LEGAL_REST.concat(['特休', '公假']);
+      const isW = (c) => WORK.includes(c) || isLend(c);
+      for (let i = 1; i < r.length - 1; i++) {
+        if (isW(r[i]) && REST_ALL.includes(r[i - 1]) && REST_ALL.includes(r[i + 1])) {
+          add('min-work-run', 'error', `${p.name} ${month}/${i + 1} 只上 1 天班就休息，班至少要連上 2 天`, p.id, i + 1);
+        }
+      }
+      // R6c 每月至少有一次連續休息 2 天
+      if (r.every((c) => c) && !r.some((c, i) => i > 0 && REST_ALL.includes(c) && REST_ALL.includes(r[i - 1]))) {
+        add('rest-pair', 'error', `${p.name} 本月沒有連續休息 2 天`, p.id, null);
+      }
       // R7 本月應休天數
       if (requiredRest != null) {
         const c = count(r, MONTH_REST);
