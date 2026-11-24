@@ -48,6 +48,7 @@
       holidayList: input.holidays || [],
       lend: input.lendCode || LEND,
       lendNeedsSenior: !!input.lendNeedsSenior,
+      lendOnly: (input.staff || []).some((p) => !p.extra && p.lendable), // 名冊有勾「支援他單位」的人，才會被借出
       out: input.out || {}, // 要借給另一單位的人數：{D:[每天],E:[],N:[]}
       incoming: Object.fromEntries(Object.entries(input.incoming || {}).map(([k, v]) => [k, v.slice()])), // 另一單位已確定借來的人數（手動或自動）；特約人員也算進來
       coverage: (input.params || {}).coverage,
@@ -241,12 +242,21 @@
           if (s1 != null && chosen.length) chosen[chosen.length - 1] = s1;
         }
       }
+      const canLend = (k) => !ctx.lendOnly || core[k].lendable;
+      const Lw = Math.max(0, covers.length + chosen.length - ownAt(i));
+      if (ctx.lendOnly && Lw > 0) { // 要借出的人數盡量由勾選「支援他單位」的人擔任
+        const spare = cand.slice(pickN).filter(canLend);
+        for (let q = chosen.length - 1; q >= 0 && spare.length; q--) {
+          if (chosen.filter(canLend).length >= Lw) break;
+          if (!canLend(chosen[q])) chosen[q] = spare.shift();
+        }
+      }
       const allCover = covers.concat(chosen);
       // 超出本單位需要的人數 = 借給另一單位的人；盡量借出 N2 以上（若規定），並保留本單位至少 1 位 N2 以上
       let lendSel = [];
       const L = Math.max(0, allCover.length - ownAt(i));
       if (L > 0) {
-        const pool = chosen.slice();
+        const pool = chosen.filter(canLend);
         for (let q = 0; q < L && pool.length; q++) {
           const keepsSenior = (k) => !ctx.requireSenior || allCover.filter((x) => x !== k && !lendSel.includes(x)).some((x) => isSenior(core[x]));
           const ok = pool.filter(keepsSenior);
@@ -260,7 +270,7 @@
       core.forEach((p, k) => {
         if (cells[p.id][i]) return; // 固定格不動
         if (!present[k]) return; // 休息日留空，之後標例／休息
-        rows[p.id][i] = ownCover.includes(k) ? shift : ctx.lend;
+        rows[p.id][i] = ownCover.includes(k) || !canLend(k) ? shift : ctx.lend;
       });
       allCover.forEach((k) => coverCount[k]++);
       prevCover = allCover;
