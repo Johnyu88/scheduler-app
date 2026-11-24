@@ -35,7 +35,7 @@
   if (!S.supportMax && S.supportMax !== 0) S.supportMax = 6;
   if (!S.seed) S.seed = 1;
   const autoHolidays = () => window.Holidays.forMonth(S.year, S.month);
-  if (!S.holidays.length) S.holidays = autoHolidays();
+  if (!S.holidays.length) { S.holidays = autoHolidays(); S.requiredRest = 0; }
   const recalcRest = () => { S.requiredRest = R.redDays(S.year, S.month, S.holidays); };
   if (!S.requiredRest) recalcRest();
   let mode = 'schedule';
@@ -235,7 +235,7 @@
     save(); render(false);
   }
   // 聯合排班：兩個單位一起排，缺人的日子互相借人（也可以在借出方的班表手動標借調代碼）
-  function runJoint(newSeed) {
+  async function runJoint(newSeed, onProgress) {
     const other = UNIT === '3AB' ? '2A' : '3AB';
     const okey = other === '3AB' ? 'miaoli-scheduler-3ab-v1' : 'miaoli-scheduler-2a-v1';
     let O = null;
@@ -255,7 +255,18 @@
       return { manual, pr, unit: { ...base, cells: pr.cells, auto: {} }, c };
     };
     const mine = build(UNIT, S), theirs = build(other, O);
-    const j = window.Solver.jointSchedule(UNIT === '2A' ? [mine.unit, theirs.unit] : [theirs.unit, mine.unit]);
+    const us = UNIT === '2A' ? [mine.unit, theirs.unit] : [theirs.unit, mine.unit];
+    // 分段執行：每次嘗試之間讓出畫面，顯示進度；超過時間預算就採用目前最好的結果
+    let best = null; const t0 = Date.now(); const TRIES = 5, BUDGET = 30000;
+    for (let t = 0; t < TRIES; t++) {
+      if (best && Date.now() - t0 > BUDGET) break;
+      if (onProgress) onProgress(`排班中… ${t + 1}/${TRIES}`);
+      await new Promise((r) => setTimeout(r, 30));
+      const x = window.Solver.jointTry(us, t);
+      if (!best || x.score < best.score) best = x;
+      if (best.score === 0) break;
+    }
+    const j = best.r;
     const resOf = (u) => (u === '2A' ? j.A : j.B);
     const apply = (st, b, res) => {
       if (!st.cells) st.cells = {}; if (!st.auto) st.auto = {};
@@ -272,7 +283,7 @@
     save(); render(false);
   }
   const jb = $('jointRun');
-  if (jb) jb.onclick = () => { const t = jb.textContent; jb.textContent = '排班中…'; jb.disabled = true; setTimeout(() => { try { runJoint(false); } finally { jb.textContent = t; jb.disabled = false; } }, 30); };
+  if (jb) jb.onclick = async () => { const t = jb.textContent; jb.textContent = '排班中…'; jb.disabled = true; try { await runJoint(true, (m) => { jb.textContent = m; }); } catch (e) { const rep = $('autoReport'); if (rep) rep.innerHTML = `<div class="issue">排班發生錯誤：${esc(e && e.message || e)}</div>`; } finally { jb.textContent = t; jb.disabled = false; } };
   $('supportMax').onchange = (e) => { S.supportMax = Math.max(0, Number(e.target.value) || 0); save(); };
   $('autoRun').onclick = () => runAuto(false);
   $('autoAgain').onclick = () => runAuto(true);

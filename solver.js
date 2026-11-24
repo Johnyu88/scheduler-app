@@ -380,17 +380,24 @@
 
   // 兩個單位一起排：A 缺人的日子由 B 借人，B 缺人由 A 借；也接受手動借調（借出方在自己的班表直接標借調代碼）
   // units = [{ name, ...autoSchedule 的輸入, lendCode, lendNeedsSenior }, 另一單位]
+  // 單次嘗試：回傳 {r, score}，score 越小越好（缺人 ×1000 + 違規數）
+  function jointTry(units, t) {
+    const us = units.map((u, k) => ({ ...u, seed: (u.seed || 1) + t * 7 + k, effort: 3 }));
+    const r = jointOnce(us);
+    const bad = (u, res) => R.checkSchedule({ ...u, cells: res.cells, incoming: res.incoming }).filter((i) => i.level === 'error' && ['senior-mix', 'coverage'].includes(i.rule)).length;
+    return { r, score: (r.A.gaps.length + r.B.gaps.length) * 1000 + bad(us[0], r.A) + bad(us[1], r.B) };
+  }
   function jointSchedule(units, opts) {
-    // 多試幾個種子，挑缺人最少（其次違規最少）的結果；排滿就提早結束
+    // 多試幾個種子，挑缺人最少（其次違規最少）的結果；排滿或超過時間預算就結束
     opts = opts || {};
     const tries = opts.tries || 5;
+    const budget = opts.budgetMs || 40000;
+    const t0 = Date.now();
     let best = null;
     for (let t = 0; t < tries; t++) {
-      const us = units.map((u, k) => ({ ...u, seed: (u.seed || 1) + t * 7 + k }));
-      const r = jointOnce(us);
-      const bad = (u, res) => R.checkSchedule({ ...u, cells: res.cells, incoming: res.incoming }).filter((i) => i.level === 'error' && ['senior-mix', 'coverage'].includes(i.rule)).length;
-      const score = (r.A.gaps.length + r.B.gaps.length) * 1000 + bad(us[0], r.A) + bad(us[1], r.B);
-      if (!best || score < best.score) best = { r, score };
+      if (best && Date.now() - t0 > budget) break;
+      const x = jointTry(units, t);
+      if (!best || x.score < best.score) best = x;
       if (best.score === 0) break;
     }
     return best.r;
@@ -482,5 +489,5 @@
     return { cells, accepted, rejected };
   }
 
-  return { autoSchedule, jointSchedule, resolvePrebooks, DEFAULTS, LEND };
+  return { autoSchedule, jointSchedule, jointTry, resolvePrebooks, DEFAULTS, LEND };
 });

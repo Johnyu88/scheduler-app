@@ -1,5 +1,5 @@
 // 讓 App 離線也能開。更新程式時把版本號加 1。
-const CACHE = 'scheduler-v8';
+const CACHE = 'scheduler-v9';
 const FILES = ['./', './index.html', './app.js', './rules.js', './holidays.js', './solver.js', './xlsx.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
