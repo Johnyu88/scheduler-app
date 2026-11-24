@@ -49,7 +49,7 @@
       lend: input.lendCode || LEND,
       lendNeedsSenior: !!input.lendNeedsSenior,
       out: input.out || {}, // 要借給另一單位的人數：{D:[每天],E:[],N:[]}
-      incoming: input.incoming || {}, // 另一單位已確定借來的人數（手動或自動）
+      incoming: Object.fromEntries(Object.entries(input.incoming || {}).map(([k, v]) => [k, v.slice()])), // 另一單位已確定借來的人數（手動或自動）；特約人員也算進來
       coverage: (input.params || {}).coverage,
       requireSenior: !!(input.params || {}).requireSenior,
       staff: staff.filter((p) => !p.extra),
@@ -338,6 +338,21 @@
     const lent = {};
     const notes = [];
     const gapMap = {}, lentMap = {};
+    // 特約人員（額外人力）先排：她上班的日子，該班本單位需要的人數少 1（例如小夜 5 人，她在時固定人員 4 人 + 她）
+    ctx.extras.forEach((p) => {
+      const row = normRow(fixed[p.id], n);
+      const ectx = { ...ctx, need: p.restDays != null ? p.restDays : ctx.need };
+      const sp = spec(ectx, p, row);
+      const pool = genPool(ectx, sp, rng, 40);
+      if (!pool.length) { notes.push(`特約人員 ${p.name} 無法排出合規的休息日（預假或已填的格子可能互相衝突）`); out[p.id] = row; return; }
+      const pat = pool[Math.floor(rng() * pool.length)];
+      const rows = { [p.id]: row.map((c, i) => (c ? c : pat[i] ? '' : p.shift)) };
+      labelRests(ectx, rows, [p]);
+      out[p.id] = rows[p.id];
+      if (!ctx.incoming[p.shift]) ctx.incoming[p.shift] = new Array(n).fill(0);
+      else ctx.incoming[p.shift] = ctx.incoming[p.shift].slice(0, n);
+      rows[p.id].forEach((c, i) => { if (c === p.shift) ctx.incoming[p.shift][i] = (ctx.incoming[p.shift][i] || 0) + 1; });
+    });
     let otherOff = new Array(n).fill(0);
     for (const shift of WORK) {
       const r = solveShift(ctx, shift, cells, { rng, otherOff, effort: input.effort || 3 });
@@ -360,36 +375,27 @@
       r.core.forEach((p) => { const c = out[p.id].filter((x) => isLend(x)).length; if (c) lent[p.id] = c; });
       otherOff = otherOff.map((v, i) => v + (r.offs ? r.offs[i] : 0));
     }
-    // 特約人員：一樣排休息日；上班日盡量落在該班缺人的日子（補缺），沒缺人時就是額外人力
-    ctx.extras.forEach((p) => {
-      const row = normRow(fixed[p.id], n);
-      const ectx = { ...ctx, need: p.restDays != null ? p.restDays : ctx.need };
-      const sp = spec(ectx, p, row);
-      const gapDays = new Set(gaps.filter((g) => g.shift === p.shift).map((g) => g.day));
-      let bestPat = null, bestScore = Infinity;
-      for (const o of genPool(ectx, sp, rng, 60)) {
-        let sc = rng() * 0.5;
-        for (let d = 1; d <= n; d++) if (gapDays.has(d) && (o[d - 1] || sp.fixedOff[d - 1])) sc += 1;
-        if (sc < bestScore) { bestScore = sc; bestPat = o; }
-      }
-      if (!bestPat) { notes.push(`特約人員 ${p.name} 無法排出合規的休息日（預假或已填的格子可能互相衝突）`); out[p.id] = row; return; }
-      const rows = { [p.id]: row.map((c, i) => (c ? c : bestPat[i] ? '' : p.shift)) };
-      labelRests(ectx, rows, [p]);
-      out[p.id] = rows[p.id];
-      // 她上班的日子補上該班的缺口
-      rows[p.id].forEach((c, i) => {
-        if (c !== p.shift) return;
-        const k = gaps.findIndex((g) => g.shift === p.shift && g.day === i + 1);
-        if (k >= 0) { gaps.splice(k, 1); if (gapMap[p.shift]) gapMap[p.shift][i] = Math.max(0, gapMap[p.shift][i] - 1); }
-      });
-    });
     return { cells: out, gaps, supportUsage, lent, notes, gapMap, lentMap };
   }
 
   // 兩個單位一起排：A 缺人的日子由 B 借人，B 缺人由 A 借；也接受手動借調（借出方在自己的班表直接標借調代碼）
   // units = [{ name, ...autoSchedule 的輸入, lendCode, lendNeedsSenior }, 另一單位]
   function jointSchedule(units, opts) {
+    // 多試幾個種子，挑缺人最少（其次違規最少）的結果；排滿就提早結束
     opts = opts || {};
+    const tries = opts.tries || 5;
+    let best = null;
+    for (let t = 0; t < tries; t++) {
+      const us = units.map((u, k) => ({ ...u, seed: (u.seed || 1) + t * 7 + k }));
+      const r = jointOnce(us);
+      const bad = (u, res) => R.checkSchedule({ ...u, cells: res.cells, incoming: res.incoming }).filter((i) => i.level === 'error' && ['senior-mix', 'coverage'].includes(i.rule)).length;
+      const score = (r.A.gaps.length + r.B.gaps.length) * 1000 + bad(us[0], r.A) + bad(us[1], r.B);
+      if (!best || score < best.score) best = { r, score };
+      if (best.score === 0) break;
+    }
+    return best.r;
+  }
+  function jointOnce(units) {
     const [A, B] = units;
     const n = R.daysInMonth(A.year, A.month);
     const zero = () => ({ D: new Array(n).fill(0), E: new Array(n).fill(0), N: new Array(n).fill(0) });

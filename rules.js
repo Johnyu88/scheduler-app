@@ -65,7 +65,7 @@
         const ex = staff.filter((p) => p.extra && row(p)[d - 1] === s).length; // 特約人員：額外人力，人力不足時可補上
         const c = who.length;
         const want = Math.max(0, coverageNeed(P.coverage, s, year, month, d, input.holidays) - (((P.incoming || {})[s] || [])[d - 1] || 0));
-        if (c > want || (c < want && c + ex < want)) add('coverage', 'error', `${month}/${d} ${SHIFT_LABEL[s]} ${c} 人，應為 ${want} 人`, null, d);
+        if (c + ex < want || c + ex > want + (ex > 0 ? 1 : 0)) add('coverage', 'error', `${month}/${d} ${SHIFT_LABEL[s]} ${c} 人，應為 ${want} 人`, null, d);
         if (P.requireSenior && c > 0 && !who.some((p) => SUPPORT_LEVELS.includes(p.level))) add('senior-mix', 'error', `${month}/${d} ${SHIFT_LABEL[s]} 沒有 N2 以上的人員`, null, d);
       }
     }
