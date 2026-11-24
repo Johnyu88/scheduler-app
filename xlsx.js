@@ -148,6 +148,16 @@
       heights[r] = 22; heights[r + 1] = 15;
       r += 2;
     });
+    // 他單位借來支援的人：每人一列，只標有支援的日子（與對方班表的借調標記一致）
+    (st.borrowed || []).forEach((p) => {
+      put(`A${r}`, null, {}); put(`B${r}`, p.level, {});
+      put(`C${r}`, `${p.name}（${p.from}支援）`, { bold: true, wrap: true });
+      for (let d = 1; d <= n; d++) {
+        const c = colName(first + d - 1), on = p.days.includes(d);
+        put(`${c}${r}`, on ? p.shift : null, { fill: on ? FILL[p.shift] : (isOff(d) ? 'F2F2F2' : undefined) });
+      }
+      heights[r] = 22; r += 1;
+    });
     // 每日上班人數（本單位，不含借調出去的人；另列他單位借入）
     r += 1;
     const incoming = st.incoming || {};

@@ -80,6 +80,22 @@
       : R.checkPrebook({ ...params, requestedAt: S.requestedAt, prebook: S.prebook });
   }
 
+  // 另一單位借給本單位的人：讀對方班表裡標了「本單位代碼」的日子，在本單位班表顯示成唯讀的支援列
+  function borrowedFrom(O, target) { // O 單位借給 target 單位的人
+    if (!O || !O.staff || O.year !== S.year || O.month !== S.month) return [];
+    const n = nDays(), out = [], from = target === '3AB' ? '2A' : '3AB';
+    O.staff.forEach((p) => {
+      if (p.extra) return;
+      const r = (O.cells && O.cells[p.id]) || [];
+      const days = [];
+      for (let d = 1; d <= n; d++) if (r[d - 1] === target) days.push(d);
+      if (days.length) out.push({ id: p.id, name: p.name, level: p.level, shift: p.shift, from, days });
+    });
+    return out;
+  }
+  const loadOther = () => { try { return JSON.parse(localStorage.getItem(UNIT === '3AB' ? 'miaoli-scheduler-2a-v1' : 'miaoli-scheduler-3ab-v1')); } catch (e) { return null; } };
+  function borrowedRows() { return borrowedFrom(loadOther(), UNIT); }
+
   function renderGrid(issues) {
     const n = nDays();
     const bad = new Set(issues.filter((i) => i.staffId && i.day).map((i) => i.staffId + ':' + i.day));
@@ -101,13 +117,24 @@
       }
       h += '</tr>';
     });
+    const borrowed = mode === 'schedule' ? borrowedRows() : [];
+    borrowed.forEach((p) => {
+      h += `<tr class="borrowed"><td class="name">${esc(p.name)}<div class="small">${p.level} ${p.shift} ←${p.from}</div></td>`;
+      for (let d = 1; d <= n; d++) {
+        const w = R.dow(S.year, S.month, d);
+        const on = p.days.includes(d);
+        h += `<td class="${on ? 'bor ' + p.shift : ''} ${w === 0 || w === 6 ? 'we' : ''}" style="${on ? 'background:#e8f0ff;font-weight:700' : ''}">${on ? p.shift : ''}</td>`;
+      }
+      h += '</tr>';
+    });
     if (mode === 'schedule') {
       const lab = { D: '白', E: '小', N: '大' };
       ['D', 'E', 'N'].forEach((s) => {
         h += `<tr><td class="name">${lab[s]}班人數</td>`;
         for (let d = 1; d <= n; d++) {
-          const c = S.staff.filter((p) => rowOf(p.id)[d - 1] === s).length;
-          h += `<td class="cnt ${c === 1 ? 'good' : 'bad'}">${c}</td>`;
+          const c = S.staff.filter((p) => rowOf(p.id)[d - 1] === s).length + borrowed.filter((p) => p.days.includes(d) && p.shift === s).length;
+          const need = R.coverageNeed(CFG.coverage, s, S.year, S.month, d, S.holidays);
+          h += `<td class="cnt ${c >= need && c <= need + 1 ? 'good' : 'bad'}">${c}</td>`;
         }
         h += '</tr>';
       });
@@ -338,7 +365,7 @@
   };
   // 匯出 Excel：版面仿照護理長現行班表（每人兩列：上列班別、下列借調標記，右側統計休假天數）
   $('exportXlsx').onclick = () => {
-    const bytes = window.Xlsx.workbook([window.Xlsx.scheduleSheet(S, UNIT)]);
+    const bytes = window.Xlsx.workbook([window.Xlsx.scheduleSheet({ ...S, borrowed: borrowedRows() }, UNIT)]);
     download(`${UNIT}-${S.year - 1911}年${S.month}月班表.xlsx`, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   };
   $('exportXlsx2').onclick = () => {
@@ -346,7 +373,7 @@
     let O = null;
     try { O = JSON.parse(localStorage.getItem(other === '3AB' ? 'miaoli-scheduler-3ab-v1' : 'miaoli-scheduler-2a-v1')); } catch (e) {}
     if (!O || !O.staff || !O.staff.length || O.year !== S.year || O.month !== S.month) { alert(`${other} 沒有同一個月的資料，請先在 ${other} 排好班（或匯入）。`); return; }
-    const sheets = UNIT === '2A' ? [window.Xlsx.scheduleSheet(S, '2A'), window.Xlsx.scheduleSheet(O, '3AB')] : [window.Xlsx.scheduleSheet(O, '2A'), window.Xlsx.scheduleSheet(S, '3AB')];
+    const sheets = UNIT === '2A' ? [window.Xlsx.scheduleSheet({ ...S, borrowed: borrowedFrom(O, '2A') }, '2A'), window.Xlsx.scheduleSheet({ ...O, borrowed: borrowedFrom(S, '3AB') }, '3AB')] : [window.Xlsx.scheduleSheet({ ...O, borrowed: borrowedFrom(S, '2A') }, '2A'), window.Xlsx.scheduleSheet({ ...S, borrowed: borrowedFrom(O, '3AB') }, '3AB')];
     download(`2A+3AB-${S.year - 1911}年${S.month}月班表.xlsx`, window.Xlsx.workbook(sheets), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   };
   const rowOf0 = (id, n) => { const r = (S.cells[id] || []).slice(0, n); while (r.length < n) r.push(''); return r; };
