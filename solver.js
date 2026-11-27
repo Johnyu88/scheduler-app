@@ -526,6 +526,70 @@
     const accA = zero(), accB = zero(); // 實際被對方借到的人數
     WORK.forEach((s) => { for (let i = 0; i < n; i++) { accA[s][i] = incB[s][i]; accB[s][i] = incA[s][i]; } }); // A 借給 B 的＝incB
     settle(A, rA, accA, cA); settle(B, rB, accB, cB);
+    // 借調要在上班連續段的頭或尾（例：2A,2A,D,D），不能夾在中間（2A,D,2A）；同一天跟同班同事對調標記來修正
+    const fixRuns = (u, r, man) => {
+      const code = u.lendCode, core = (u.staff || []).filter((p) => !p.extra && WORK.includes(p.shift));
+      const lendOnly = !!u.lendTouched || core.some((p) => p.lendable);
+      const senior = (p) => R.SUPPORT_LEVELS.includes(p.level);
+      const isW = (c) => c === code || WORK.includes(c);
+      const excess = (row) => { // 每段連續上班中，換類型的次數超過 1 次的部分
+        let ex = 0, i = 0;
+        while (i < n) {
+          if (!isW(row[i])) { i++; continue; }
+          let j = i, tr = 0;
+          while (j + 1 < n && isW(row[j + 1])) { if ((row[j + 1] === code) !== (row[j] === code)) tr++; j++; }
+          ex += Math.max(0, tr - 1); i = j + 1;
+        }
+        return ex;
+      };
+      const cellOk = (p, d, row) => !((man[p.id] || [])[d]) && isW(row[d]);
+      for (let pass = 0; pass < 12; pass++) {
+        let changed = false;
+        for (const p of core) {
+          const rp = r.cells[p.id];
+          if (!excess(rp)) continue;
+          for (let d = 0; d < n && excess(rp); d++) {
+            if (!cellOk(p, d, rp)) continue;
+            for (const q of core) {
+              if (q === p || q.shift !== p.shift) continue;
+              const rq = r.cells[q.id];
+              if (!cellOk(q, d, rq) || (rq[d] === code) === (rp[d] === code)) continue;
+              const toLend = rp[d] === code ? q : p, toOwn = rp[d] === code ? p : q; // toLend 接手借調，toOwn 接手上本班
+              if (lendOnly && !toLend.lendable) continue;
+              if (u.lendNeedsSenior && !senior(toLend)) continue;
+              const before = excess(rp) + excess(rq), bp = excess(rp);
+              const a = rp[d], b = rq[d]; rp[d] = b; rq[d] = a;
+              let ok = excess(rp) + excess(rq) <= before && excess(rp) < bp;
+              if (ok && u.params && u.params.requireSenior) { // 該班本單位仍要有 N2 以上在
+                const own = core.filter((x) => x.shift === p.shift && r.cells[x.id][d] === p.shift);
+                if (own.length && !own.some(senior)) ok = false;
+              }
+              if (ok) { changed = true; break; }
+              rp[d] = a; rq[d] = b;
+            }
+          }
+        }
+        if (!changed) break;
+      }
+    };
+    const restSandwich = (u, r, man, acc) => { // 換不掉的夾中間借調（對方其實用不到的），改成休息
+      const code = u.lendCode;
+      (u.staff || []).forEach((p) => {
+        if (p.extra || !WORK.includes(p.shift)) return;
+        const row = r.cells[p.id];
+        for (let d = 1; d < n - 1; d++) {
+          if (row[d] !== code || (man[p.id] || [])[d]) continue;
+          if ((acc[p.shift] || [])[d]) continue; // 對方有在用的不動
+          const isW = (c) => !!c && !OFFC.includes(c);
+          if (!(isW(row[d - 1]) && isW(row[d + 1]) && ((row[d - 1] === code) !== (row[d + 1] === code) || row[d - 1] !== code && row[d + 1] !== code))) continue;
+          let a = d; while (a > 0 && isW(row[a - 1])) a--;
+          let b = d; while (b < n - 1 && isW(row[b + 1])) b++;
+          if (d - a >= 2 && b - d >= 2 && row.filter((c) => R.MONTH_REST.includes(c)).length < u.requiredRest) row[d] = '休息';
+        }
+      });
+    };
+    fixRuns(A, rA, cA); fixRuns(B, rB, cB);
+    restSandwich(A, rA, cA, accA); restSandwich(B, rB, cB, accB);
     const addManual = (inc, man) => WORK.forEach((s) => { for (let i = 0; i < n; i++) inc[s][i] += man[s][i]; });
     addManual(incA, mA); addManual(incB, mB);
     return { A: { ...rA, gaps: gapsA, incoming: incA }, B: { ...rB, gaps: gapsB, incoming: incB }, loans };

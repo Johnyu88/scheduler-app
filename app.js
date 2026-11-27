@@ -380,7 +380,6 @@
   if (jb) jb.onclick = async () => { const t = jb.textContent; jb.textContent = '排班中…'; jb.disabled = true; try { await runJoint(true, (m) => { jb.textContent = m; }); } catch (e) { const rep = $('autoReport'); if (rep) rep.innerHTML = `<div class="issue">排班發生錯誤：${esc(e && e.message || e)}</div>`; } finally { jb.textContent = t; jb.disabled = false; } };
   $('supportMax').onchange = (e) => { S.supportMax = Math.max(0, Number(e.target.value) || 0); save(); };
   $('autoRun').onclick = () => runAuto(false);
-  $('autoAgain').onclick = () => runAuto(true);
   $('autoClear').onclick = () => {
     S.staff.forEach((p) => {
       const a = S.auto[p.id] || [];
