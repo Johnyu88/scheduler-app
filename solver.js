@@ -48,7 +48,7 @@
       holidayList: input.holidays || [],
       lend: input.lendCode || LEND,
       lendNeedsSenior: !!input.lendNeedsSenior,
-      lendOnly: (input.staff || []).some((p) => !p.extra && p.lendable), // 名冊有勾「支援他單位」的人，才會被借出
+      lendOnly: !!input.lendTouched || (input.staff || []).some((p) => !p.extra && p.lendable), // 名冊有勾「支援他單位」的人，才會被借出
       out: input.out || {}, // 要借給另一單位的人數：{D:[每天],E:[],N:[]}
       incoming: Object.fromEntries(Object.entries(input.incoming || {}).map(([k, v]) => [k, v.slice()])), // 另一單位已確定借來的人數（手動或自動）；特約人員也算進來
       coverage: (input.params || {}).coverage,

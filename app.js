@@ -180,6 +180,7 @@
       el.onchange = () => {
         const p = S.staff[el.dataset.i];
         p[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value;
+        if (el.dataset.k === 'lendable') S.lendTouched = true; // 勾選過之後，沒勾的人就不會被借出（全都不勾＝不借出）
         save(); render(false);
       };
     });
@@ -248,7 +249,7 @@
       const a = S.auto[p.id] || [];
       manual[p.id] = r.map((c, i) => (a[i] ? '' : c));
     });
-    const common = { year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { supportMaxDays: S.supportMax, coverage: CFG.coverage, requireSenior: CFG.requireSenior }, lendCode: CFG.lend };
+    const common = { lendTouched: S.lendTouched, year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { supportMaxDays: S.supportMax, coverage: CFG.coverage, requireSenior: CFG.requireSenior }, lendCode: CFG.lend };
     // 預假審核：特休優先，同類依登記先後；人力不足的預假被削減
     const pr = window.Solver.resolvePrebooks({ ...common, cells: manual, prebook: S.prebook });
     const res = window.Solver.autoSchedule({ ...common, cells: pr.cells, seed: S.seed });
@@ -278,7 +279,7 @@
       st.staff.forEach((p) => { const r = (st.cells && st.cells[p.id]) || []; const au = (st.auto && st.auto[p.id]) || []; manual[p.id] = Array.from({ length: n }, (_, i) => (au[i] ? '' : r[i] || '')); });
       const rr = st.restManual ? st.requiredRest : R.redDays(st.year, st.month, st.holidays || []);
       st.requiredRest = rr;
-      const base = { name: u, year: st.year, month: st.month, staff: st.staff, requiredRest: rr, holidays: st.holidays || [], params: { supportMaxDays: st.supportMax == null ? 6 : st.supportMax, coverage: c.coverage, requireSenior: c.requireSenior }, lendCode: c.lend, lendNeedsSenior: c.lendNeedsSenior, seed: st.seed || 1 };
+      const base = { lendTouched: st.lendTouched, name: u, year: st.year, month: st.month, staff: st.staff, requiredRest: rr, holidays: st.holidays || [], params: { supportMaxDays: st.supportMax == null ? 6 : st.supportMax, coverage: c.coverage, requireSenior: c.requireSenior }, lendCode: c.lend, lendNeedsSenior: c.lendNeedsSenior, seed: st.seed || 1 };
       const pr = window.Solver.resolvePrebooks({ ...base, cells: manual, prebook: st.prebook || {} });
       return { manual, pr, unit: { ...base, cells: pr.cells, auto: {} }, c };
     };
