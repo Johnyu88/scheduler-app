@@ -275,7 +275,7 @@
       core.forEach((p, k) => {
         if (cells[p.id][i]) return; // 固定格不動
         if (!present[k]) return; // 休息日留空，之後標例／休息
-        rows[p.id][i] = ownCover.includes(k) ? shift : canLend(k) ? ctx.lend : '特休'; // 多餘的人：可借調→支援另一單位；否則休假
+        rows[p.id][i] = ownCover.includes(k) ? shift : canLend(k) ? ctx.lend : '休息'; // 多餘的人：可借調→支援另一單位；否則多休一天（不用特休）
       });
       allCover.forEach((k) => coverCount[k]++);
       prevCover = allCover;

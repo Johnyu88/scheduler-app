@@ -233,6 +233,41 @@
     if (withStaff) renderStaff();
   }
 
+  // 人力試算：每班需求人日 vs 可上班人日，說明缺人的原因
+  function capacityHtml() {
+    const lab = { D: '白班', E: '小夜', N: '大夜' };
+    const n = nDays();
+    const covOf = (u) => (u === '3AB' ? { D: { weekday: 7, off: 6 }, E: 5, N: 4 } : { D: 1, E: 1, N: 1 });
+    const one = (st, cov, hol, name) => {
+      const out = {};
+      ['D', 'E', 'N'].forEach((s) => {
+        let need = 0; for (let d = 1; d <= n; d++) need += R.coverageNeed(cov, s, st.year, st.month, d, hol);
+        let sup = 0, cnt = 0;
+        st.staff.forEach((p) => { if (p.shift !== s) return; if (!p.extra) cnt++; sup += n - (p.extra && p.restDays != null ? p.restDays : st.requiredRest); });
+        out[s] = { need, sup, cnt };
+      });
+      return out;
+    };
+    const mineCap = one(S, CFG.coverage, S.holidays || [], UNIT);
+    const O = loadOther();
+    const rows = [[UNIT, mineCap]];
+    if (O && O.year === S.year && O.month === S.month) rows.push([UNIT === '3AB' ? '2A' : '3AB', one(O, covOf(UNIT === '3AB' ? '2A' : '3AB'), O.holidays || [], '')]);
+    let h = '<div class="small" style="margin-top:8px"><b>缺人原因（人力試算，以標準應休 ' + S.requiredRest + ' 天計）</b><br>';
+    const tot = {};
+    rows.forEach(([u, cap]) => ['D', 'E', 'N'].forEach((s) => {
+      const c = cap[s]; const diff = c.sup - c.need;
+      tot[s] = (tot[s] || 0) + diff;
+      h += `${u}${lab[s]}：${c.cnt} 人，需要 ${c.need} 人天，最多可上 ${c.sup} 人天 → ${diff >= 0 ? '多出 ' + diff : '<span style="color:#b91c1c">不足 ' + (-diff) + '</span>'}<br>`;
+    }));
+    if (rows.length > 1) {
+      h += '兩單位合計：' + ['D', 'E', 'N'].map((s) => `${lab[s]}${tot[s] >= 0 ? '多 ' + tot[s] : '不足 ' + (-tot[s])}`).join('、') + '。<br>';
+      const lack = ['D', 'E', 'N'].filter((s) => tot[s] < 0), more = ['D', 'E', 'N'].filter((s) => tot[s] > 0);
+      if (lack.length && more.length) h += `${more.map((s) => lab[s]).join('、')}人力有多、${lack.map((s) => lab[s]).join('、')}不夠；但借調只能借「同一個班別」的人，白班的人不會去上${lack.map((s) => lab[s]).join('、')}，所以${lack.map((s) => lab[s]).join('、')}會缺人、其他班會多休。`;
+      else if (lack.length) h += '這幾班整體人力就不夠。';
+    }
+    return h + '</div>';
+  }
+
   function renderAutoReport() {
     const el = $('autoReport');
     const r = S.autoReport;
@@ -261,6 +296,7 @@
     }
     (r.notes || []).forEach((n) => (h += `<div class="issue">${esc(n)}</div>`));
     if (!r.gaps.length && !(r.notes || []).length && !(r.rejected || []).length) h = '<div class="ok">已排滿，每班每天都有人。</div>' + h;
+    if (r.gaps.length) h += capacityHtml();
     if (r.gaps.length) h += '<div class="small">缺人的日子，可以指定更多支援人員（N2 以上）、增加特約人員，或調高「支援每人最多」天數，再按自動排班。</div>';
     el.innerHTML = h;
   }
