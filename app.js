@@ -81,20 +81,25 @@
   }
 
   // 另一單位借給本單位的人：讀對方班表裡標了「本單位代碼」的日子，在本單位班表顯示成唯讀的支援列
-  function borrowedFrom(O, target) { // O 單位借給 target 單位的人
+  function borrowedFrom(O, target, recv) { // O 單位借給 target 單位的人
     if (!O || !O.staff || O.year !== S.year || O.month !== S.month) return [];
     const n = nDays(), out = [], from = target === '3AB' ? '2A' : '3AB';
+    const used = {}; // 只顯示對方實際用到的人數（本單位該班該日 incoming 數）
+    const inc = (recv && recv.incoming) || {};
     O.staff.forEach((p) => {
       if (p.extra) return;
       const r = (O.cells && O.cells[p.id]) || [];
       const days = [];
-      for (let d = 1; d <= n; d++) if (r[d - 1] === target) days.push(d);
+      for (let d = 1; d <= n; d++) if (r[d - 1] === target) {
+        const key = p.shift + d, cap = ((inc[p.shift] || [])[d - 1]) || 0;
+        if ((used[key] || 0) < cap) { used[key] = (used[key] || 0) + 1; days.push(d); }
+      }
       if (days.length) out.push({ id: p.id, name: p.name, level: p.level, shift: p.shift, from, days });
     });
     return out;
   }
   const loadOther = () => { try { return JSON.parse(localStorage.getItem(UNIT === '3AB' ? 'miaoli-scheduler-2a-v1' : 'miaoli-scheduler-3ab-v1')); } catch (e) { return null; } };
-  function borrowedRows() { return borrowedFrom(loadOther(), UNIT); }
+  function borrowedRows() { return borrowedFrom(loadOther(), UNIT, S); }
 
   function renderGrid(issues) {
     const n = nDays();
@@ -160,12 +165,12 @@
     S.staff.forEach((p) => {
       const r = rowOf(p.id);
       const rests = []; for (let d = 1; d <= n; d++) if (R.MONTH_REST.includes(r[d - 1])) rests.push(d);
-      const want = p.extra ? (p.restDays != null ? p.restDays : null) : (p.restDays != null ? p.restDays : S.requiredRest);
+      const want = p.extra ? (p.restDays != null ? p.restDays : null) : S.requiredRest; // 應休＝當月標準天數
       if (!p.extra) { mn = Math.min(mn, rests.length); mx = Math.max(mx, rests.length); }
       const wk = rests.filter((d) => { const w = R.dow(S.year, S.month, d); return (w === 0 || w === 6) && !hol.has(d); });
       const gd = rests.filter((d) => hol.has(d));
-      const less = want != null && rests.length < want, cut = !p.extra && p.restDays != null && p.restDays < S.requiredRest;
-      h += `<tr><td class="name">${esc(p.name)}<div class="small">${p.level} ${p.shift}${p.extra ? ' 特約' : ''}</div></td><td style="${less ? 'color:#b91c1c;font-weight:700' : cut ? 'color:#b45309;font-weight:700' : ''}">${rests.length}${want != null ? ' / ' + want : ''}${cut ? '<div class="small">人力不足減休</div>' : ''}</td><td style="text-align:left">${wk.length}日：${list(wk)}</td><td style="text-align:left">${gd.length}日：${list(gd)}</td></tr>`;
+      const cut = !p.extra && rests.length < S.requiredRest, less = !p.extra && p.restDays != null ? rests.length < p.restDays : false;
+      h += `<tr><td class="name">${esc(p.name)}<div class="small">${p.level} ${p.shift}${p.extra ? ' 特約' : ''}</div></td><td style="${less ? 'color:#b91c1c;font-weight:700' : cut ? 'color:#b45309;font-weight:700' : ''}">${rests.length}${want != null ? ' / ' + want : ''}${cut ? '<div class="small">少休 ' + (S.requiredRest - rests.length) + ' 天（人力不足）</div>' : ''}</td><td style="text-align:left">${wk.length}日：${list(wk)}</td><td style="text-align:left">${gd.length}日：${list(gd)}</td></tr>`;
     });
     if (mx >= 0 && mx - mn > 2) h += `<tr><td colspan="4" class="small" style="color:#b91c1c">各人實休最多差 ${mx - mn} 天，超過 2 天，建議重新排班。</td></tr>`;
     el.innerHTML = h;
@@ -400,7 +405,7 @@
     let O = null;
     try { O = JSON.parse(localStorage.getItem(other === '3AB' ? 'miaoli-scheduler-3ab-v1' : 'miaoli-scheduler-2a-v1')); } catch (e) {}
     if (!O || !O.staff || !O.staff.length || O.year !== S.year || O.month !== S.month) { alert(`${other} 沒有同一個月的資料，請先在 ${other} 排好班（或匯入）。`); return; }
-    const sheets = UNIT === '2A' ? [window.Xlsx.scheduleSheet({ ...S, borrowed: borrowedFrom(O, '2A') }, '2A'), window.Xlsx.scheduleSheet({ ...O, borrowed: borrowedFrom(S, '3AB') }, '3AB')] : [window.Xlsx.scheduleSheet({ ...O, borrowed: borrowedFrom(S, '2A') }, '2A'), window.Xlsx.scheduleSheet({ ...S, borrowed: borrowedFrom(O, '3AB') }, '3AB')];
+    const sheets = UNIT === '2A' ? [window.Xlsx.scheduleSheet({ ...S, borrowed: borrowedFrom(O, '2A', S) }, '2A'), window.Xlsx.scheduleSheet({ ...O, borrowed: borrowedFrom(S, '3AB', O) }, '3AB')] : [window.Xlsx.scheduleSheet({ ...O, borrowed: borrowedFrom(S, '2A', O) }, '2A'), window.Xlsx.scheduleSheet({ ...S, borrowed: borrowedFrom(O, '3AB', S) }, '3AB')];
     download(`2A+3AB-${S.year - 1911}年${S.month}月班表.xlsx`, window.Xlsx.workbook(sheets), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   };
   const rowOf0 = (id, n) => { const r = (S.cells[id] || []).slice(0, n); while (r.length < n) r.push(''); return r; };

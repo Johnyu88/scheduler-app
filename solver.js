@@ -160,8 +160,13 @@
     const ownAt = (i) => Math.max(0, R.coverageNeed(ctx.coverage, shift, ctx.year, ctx.month, i + 1, ctx.holidayList) - incAt(i));
     const reqAt = (i) => ownAt(i) + outAt(i);
     const isSenior = (p) => R.SUPPORT_LEVELS.includes(p.level);
+    // 六日休息盡量平均：每人六日（非國定）休息天數接近「休息天數 × 六日占比」
+    const isWk = (i) => { const w = R.dow(ctx.year, ctx.month, i + 1); return (w === 0 || w === 6) && !ctx.holidays.has(i + 1); };
+    const wkDays = []; for (let i = 0; i < n; i++) if (isWk(i)) wkDays.push(i);
+    const wkTarget = core.map((p) => Math.round((wkDays.length * (p.restDays != null ? p.restDays : ctx.need)) / n));
     const evalCombo = (combo) => {
-      let uncovered = 0, overlap = 0, noSenior = 0, ownShort = 0, outShort = 0;
+      let uncovered = 0, overlap = 0, noSenior = 0, ownShort = 0, outShort = 0, wkDev = 0;
+      combo.forEach((o, k) => { let c = o && o._wk; if (c == null) { c = 0; for (const i of wkDays) if (!presentOf(specs[k], o, i)) c++; if (o && typeof o === 'object') o._wk = c; } wkDev += (c - wkTarget[k]) * (c - wkTarget[k]); });
       for (let i = 0; i < n; i++) {
         const pres = combo.map((o, k) => (presentOf(specs[k], o, i) ? k : -1)).filter((k) => k >= 0);
         const own = ownAt(i);
@@ -174,7 +179,7 @@
       }
       uncovered = ownShort + outShort;
       // 本單位自己缺人最重；借給另一單位的缺口次之
-      return { uncovered, cost: 1000 * Math.max(0, ownShort - supCap) + 12 * ownShort + 300 * outShort + 25 * overlap + 400 * noSenior };
+      return { uncovered, cost: 1000 * Math.max(0, ownShort - supCap) + 12 * ownShort + 300 * outShort + 25 * overlap + 400 * noSenior + 20 * wkDev };
     };
 
     let best = null;
@@ -410,7 +415,7 @@
     const failed = [x.r.A, x.r.B].some((r) => (r.notes || []).some((m) => /無法/.test(m)));
     x.score += red * 10 + (failed ? 100000 : 0); x.lv = JSON.parse(JSON.stringify(plan.lv));
     const staffOf = (u) => u.staff.filter((p) => !p.extra);
-    ['A', 'B'].forEach((ab, k) => { x.r[ab].restDays = {}; staffOf(us[k]).forEach((p) => { if (p.restDays != null) x.r[ab].restDays[p.id] = p.restDays; }); });
+    ['A', 'B'].forEach((ab, k) => { x.r[ab].restDays = {}; staffOf(us[k]).forEach((p) => { const act = x.r[ab].cells[p.id].filter((c) => R.MONTH_REST.includes(c)).length; const base = p.restDays != null ? p.restDays : us[k].requiredRest; if (act !== base) x.r[ab].restDays[p.id] = act; else if (p.restDays != null) x.r[ab].restDays[p.id] = p.restDays; }); });
     if (!plan.best || x.score < plan.best.score) plan.best = x;
     plan.t++;
     const gapsOf = (r, s) => r.gaps.filter((g) => g.shift === s).length;
@@ -489,6 +494,38 @@
         for (let q = 0; q < gB - fromA; q++) gapsB.push({ day: i + 1, shift: s });
       }
     });
+    // 沒被對方用到的借調（對方該班那天沒缺口）：改成多休一天；會讓上班天數變太短或連休過長時，改回上自己的班
+    const OFFC = R.LEGAL_REST.concat(['特休', '公假']);
+    const settle = (u, r, accepted, man) => {
+      const lists = {};
+      (u.staff || []).forEach((p) => {
+        if (p.extra || !WORK.includes(p.shift)) return;
+        const row = r.cells[p.id], mrow = man[p.id] || [];
+        for (let i = 0; i < n; i++) if (row[i] === u.lendCode && !mrow[i]) (lists[p.shift + i] = lists[p.shift + i] || []).push(p);
+      });
+      Object.keys(lists).forEach((key) => {
+        const s = key[0], i = Number(key.slice(1));
+        let extra = lists[key].length - ((accepted[s] || [])[i] || 0);
+        for (let q = lists[key].length - 1; q >= 0 && extra > 0; q--, extra--) {
+          const p = lists[key][q], row = r.cells[p.id];
+          const isW = (c) => !!c && !OFFC.includes(c);
+          let a = i; while (a > 0 && isW(row[a - 1])) a--;
+          let b = i; while (b < n - 1 && isW(row[b + 1])) b++;
+          const left = i - a, right = b - i;
+          let offL = 0; for (let d = i - 1; d >= 0 && OFFC.includes(row[d]); d--) offL++;
+          let offR = 0; for (let d = i + 1; d < n && OFFC.includes(row[d]); d++) offR++;
+          const okRun = (left === 0 || left >= 2) && (right === 0 || right >= 2);
+          const have = row.filter((c) => R.MONTH_REST.includes(c)).length;
+          const wkd = R.dow(u.year, u.month, i + 1), hol = (u.holidays || []).includes(i + 1);
+          let wkHave = 0; for (let d = 0; d < n; d++) { const w = R.dow(u.year, u.month, d + 1); if ((w === 0 || w === 6) && !(u.holidays || []).includes(d + 1) && R.MONTH_REST.includes(row[d])) wkHave++; }
+          const wkBlock = (wkd === 0 || wkd === 6) && !hol && wkHave >= 3; // 六日休已夠多就不再加，維持公平
+          if (okRun && !wkBlock && have < u.requiredRest && offL + offR + 1 <= 2) row[i] = '休息'; // 只補到月標準休息天數為止，不多休
+        }
+      });
+    };
+    const accA = zero(), accB = zero(); // 實際被對方借到的人數
+    WORK.forEach((s) => { for (let i = 0; i < n; i++) { accA[s][i] = incB[s][i]; accB[s][i] = incA[s][i]; } }); // A 借給 B 的＝incB
+    settle(A, rA, accA, cA); settle(B, rB, accB, cB);
     const addManual = (inc, man) => WORK.forEach((s) => { for (let i = 0; i < n; i++) inc[s][i] += man[s][i]; });
     addManual(incA, mA); addManual(incB, mB);
     return { A: { ...rA, gaps: gapsA, incoming: incA }, B: { ...rB, gaps: gapsB, incoming: incB }, loans };
