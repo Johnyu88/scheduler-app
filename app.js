@@ -151,6 +151,26 @@
     });
   }
 
+  function renderRestStats() {
+    const el = $('restStats'); if (!el) return;
+    const n = nDays(), hol = new Set(S.holidays || []);
+    const list = (a) => (a.length ? a.join('、') : '—');
+    let h = '<tr><th class="name">姓名</th><th>實休／應休</th><th>週休（六日）</th><th>國定休</th></tr>';
+    let mn = 99, mx = -1;
+    S.staff.forEach((p) => {
+      const r = rowOf(p.id);
+      const rests = []; for (let d = 1; d <= n; d++) if (R.MONTH_REST.includes(r[d - 1])) rests.push(d);
+      const want = p.extra ? (p.restDays != null ? p.restDays : null) : (p.restDays != null ? p.restDays : S.requiredRest);
+      if (!p.extra) { mn = Math.min(mn, rests.length); mx = Math.max(mx, rests.length); }
+      const wk = rests.filter((d) => { const w = R.dow(S.year, S.month, d); return (w === 0 || w === 6) && !hol.has(d); });
+      const gd = rests.filter((d) => hol.has(d));
+      const less = want != null && rests.length < want, cut = !p.extra && p.restDays != null && p.restDays < S.requiredRest;
+      h += `<tr><td class="name">${esc(p.name)}<div class="small">${p.level} ${p.shift}${p.extra ? ' 特約' : ''}</div></td><td style="${less ? 'color:#b91c1c;font-weight:700' : cut ? 'color:#b45309;font-weight:700' : ''}">${rests.length}${want != null ? ' / ' + want : ''}${cut ? '<div class="small">人力不足減休</div>' : ''}</td><td style="text-align:left">${wk.length}日：${list(wk)}</td><td style="text-align:left">${gd.length}日：${list(gd)}</td></tr>`;
+    });
+    if (mx >= 0 && mx - mn > 2) h += `<tr><td colspan="4" class="small" style="color:#b91c1c">各人實休最多差 ${mx - mn} 天，超過 2 天，建議重新排班。</td></tr>`;
+    el.innerHTML = h;
+  }
+
   function renderIssues(issues) {
     const el = $('issues');
     if (!issues.length) { el.innerHTML = '<div class="ok">目前沒有違反規則。</div>'; return; }
@@ -204,6 +224,7 @@
     const issues = issuesNow();
     renderGrid(issues);
     renderIssues(issues);
+    renderRestStats();
     if (withStaff) renderStaff();
   }
 
@@ -240,6 +261,7 @@
   }
 
   function runAuto(newSeed) {
+    S.staff.forEach((p) => { if (p.restAuto) { delete p.restDays; delete p.restAuto; } });
     if (newSeed) S.seed = (S.seed || 1) + 1;
     const n = nDays();
     // 只保留手動填的格子，系統上次排的與預假審核結果都重算
@@ -275,6 +297,7 @@
     const cfgOf = (u) => (u === '3AB' ? { coverage: { D: { weekday: 7, off: 6 }, E: 5, N: 4 }, lend: '2A', requireSenior: true, lendNeedsSenior: true } : { coverage: { D: 1, E: 1, N: 1 }, lend: '3AB', requireSenior: false, lendNeedsSenior: false });
     const build = (u, st) => {
       const c = cfgOf(u);
+      st.staff.forEach((p) => { if (p.restAuto) { delete p.restDays; delete p.restAuto; } });
       const manual = {};
       st.staff.forEach((p) => { const r = (st.cells && st.cells[p.id]) || []; const au = (st.auto && st.auto[p.id]) || []; manual[p.id] = Array.from({ length: n }, (_, i) => (au[i] ? '' : r[i] || '')); });
       const rr = st.restManual ? st.requiredRest : R.redDays(st.year, st.month, st.holidays || []);
@@ -286,15 +309,15 @@
     const mine = build(UNIT, S), theirs = build(other, O);
     const us = UNIT === '2A' ? [mine.unit, theirs.unit] : [theirs.unit, mine.unit];
     // 分段執行：每次嘗試之間讓出畫面，顯示進度；超過時間預算就採用目前最好的結果
-    let best = null; const t0 = Date.now(); const TRIES = 5, BUDGET = 30000;
-    for (let t = 0; t < TRIES; t++) {
-      if (best && Date.now() - t0 > BUDGET) break;
-      if (onProgress) onProgress(`排班中… ${t + 1}/${TRIES}`);
+    // 人力不足時會自動減少全體休假天數（各班別最多差 2 天），並在人員表顯示每人實際月休
+    const plan = window.Solver.jointStart(us); const t0 = Date.now(); const BUDGET = 40000;
+    for (let t = 0; t < 12 && !plan.done; t++) {
+      if (plan.best && Date.now() - t0 > BUDGET) break;
+      if (onProgress) onProgress(`排班中… 第 ${t + 1} 次`);
       await new Promise((r) => setTimeout(r, 30));
-      const x = window.Solver.jointTry(us, t);
-      if (!best || x.score < best.score) best = x;
-      if (best.score === 0) break;
+      window.Solver.jointStep(plan);
     }
+    const best = plan.best;
     const j = best.r;
     const resOf = (u) => (u === '2A' ? j.A : j.B);
     const apply = (st, b, res) => {
@@ -305,6 +328,7 @@
         st.auto[p.id] = res.cells[p.id].map((c, i) => (!c || b.manual[p.id][i] ? 0 : ((b.pr.accepted[p.id] || [])[i]) ? 2 : 1));
       });
       st.incoming = res.incoming;
+      st.staff.forEach((p) => { if (res.restDays && res.restDays[p.id] != null) { p.restDays = res.restDays[p.id]; p.restAuto = true; } });
       st.autoReport = { gaps: res.gaps, supportUsage: res.supportUsage, lent: res.lent, notes: res.notes, rejected: b.pr.rejected, loans: j.loans };
     };
     apply(S, mine, resOf(UNIT)); apply(O, theirs, resOf(other));

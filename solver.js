@@ -68,7 +68,7 @@
     const fixedRest = cnt(1, n, (c) => REST_CODES.includes(c));
     return {
       p, row, fixedOff, forced,
-      Rn: Math.max(0, need - fixedRest), // 還需要系統安排的休息日數
+      Rn: Math.max(0, (p.restDays != null ? p.restDays : need) - fixedRest), // 還需要系統安排的休息日數
       fixedLi1: cnt(1, 14, (c) => c === '例'),
       fixedLi2: cnt(15, 28, (c) => c === '例'),
       fixedLegal28: cnt(1, 28, (c) => LEGAL.includes(c)),
@@ -391,11 +391,42 @@
   // 兩個單位一起排：A 缺人的日子由 B 借人，B 缺人由 A 借；也接受手動借調（借出方在自己的班表直接標借調代碼）
   // units = [{ name, ...autoSchedule 的輸入, lendCode, lendNeedsSenior }, 另一單位]
   // 單次嘗試：回傳 {r, score}，score 越小越好（缺人 ×1000 + 違規數）
-  function jointTry(units, t) {
-    const us = units.map((u, k) => ({ ...u, seed: (u.seed || 1) + t * 7 + k, effort: 3 }));
+  function jointTry(units, t, effort) {
+    const us = units.map((u, k) => ({ ...u, seed: (u.seed || 1) + t * 7 + k, effort: effort || 3 }));
     const r = jointOnce(us);
     const bad = (u, res) => R.checkSchedule({ ...u, cells: res.cells, incoming: res.incoming }).filter((i) => i.level === 'error' && ['senior-mix', 'coverage'].includes(i.rule)).length;
     return { r, score: (r.A.gaps.length + r.B.gaps.length) * 1000 + bad(us[0], r.A) + bad(us[1], r.B) };
+  }
+  // 人力不足時，全體休假一起減少（各班別之間最多差 2 天），而不是讓某些人休滿、其他人少休很多
+  const lvOf = (lv, k, s) => (lv[k] && lv[k][s]) || 0;
+  function applyLevels(units, lv) {
+    return units.map((u, k) => ({ ...u, staff: u.staff.map((p) => (p.extra || !lvOf(lv, k, p.shift) ? p : { ...p, restDays: Math.max(0, u.requiredRest - lvOf(lv, k, p.shift)) })) }));
+  }
+  function jointStart(units) { return { units, lv: [{}, {}], t: 0, stage: 0, best: null, done: false }; }
+  function jointStep(plan) { // 做一次嘗試，回傳 plan（plan.best 為目前最好的結果）；plan.done 表示不必再試
+    const us = applyLevels(plan.units, plan.lv);
+    const x = jointTry(us, plan.t, plan.t === 0 ? 3 : 2);
+    const red = plan.lv.reduce((tot, l) => tot + ['D', 'E', 'N'].reduce((q, s) => q + (l[s] || 0), 0), 0);
+    const failed = [x.r.A, x.r.B].some((r) => (r.notes || []).some((m) => /無法/.test(m)));
+    x.score += red * 10 + (failed ? 100000 : 0); x.lv = JSON.parse(JSON.stringify(plan.lv));
+    const staffOf = (u) => u.staff.filter((p) => !p.extra);
+    ['A', 'B'].forEach((ab, k) => { x.r[ab].restDays = {}; staffOf(us[k]).forEach((p) => { if (p.restDays != null) x.r[ab].restDays[p.id] = p.restDays; }); });
+    if (!plan.best || x.score < plan.best.score) plan.best = x;
+    plan.t++;
+    const gapsOf = (r, s) => r.gaps.filter((g) => g.shift === s).length;
+    const bad = ['D', 'E', 'N'].filter((s) => gapsOf(x.r.A, s) + gapsOf(x.r.B, s) > 0);
+    if (plan.best.score === 0 || (!bad.length && plan.best.score < 1000)) { plan.done = true; return plan; }
+    // 前 2 次不減休；之後每次對缺人的班別減休 1 天（最多減 4 天）
+    const totGaps = x.r.A.gaps.length + x.r.B.gaps.length;
+    if (plan.stage > 0 || plan.t >= (totGaps >= 8 ? 1 : 3)) { // 缺口少時先多換幾種排法，不要馬上減休
+      if (plan.stage >= 4) { plan.done = true; return plan; }
+      plan.stage++;
+      const cap = Math.max(0, Math.min(...plan.units.map((u) => u.requiredRest)) - 8); // 28 天內至少要有 8 天休息，不能再減
+      plan.lv.forEach((l) => bad.forEach((s) => (l[s] = Math.min(cap, (l[s] || 0) + 1))));
+      const mx = Math.max(0, ...plan.lv.flatMap((l) => ['D', 'E', 'N'].map((s) => l[s] || 0)));
+      plan.lv.forEach((l) => ['D', 'E', 'N'].forEach((s) => (l[s] = Math.max(l[s] || 0, mx - 2))));
+    }
+    return plan;
   }
   function jointSchedule(units, opts) {
     // 多試幾個種子，挑缺人最少（其次違規最少）的結果；排滿或超過時間預算就結束
@@ -499,5 +530,5 @@
     return { cells, accepted, rejected };
   }
 
-  return { autoSchedule, jointSchedule, jointTry, resolvePrebooks, DEFAULTS, LEND };
+  return { autoSchedule, jointSchedule, jointTry, jointStart, jointStep, resolvePrebooks, DEFAULTS, LEND };
 });
