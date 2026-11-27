@@ -37,7 +37,7 @@
   const autoHolidays = () => window.Holidays.forMonth(S.year, S.month);
   if (!S.holidays.length) { S.holidays = autoHolidays(); S.requiredRest = 0; }
   const recalcRest = () => { S.requiredRest = R.redDays(S.year, S.month, S.holidays); };
-  if (!S.requiredRest) recalcRest();
+  if (!S.requiredRest || !S.restManual) recalcRest(); // 沒有手動改過就依月份與假日重算，避免存到舊值
   let mode = 'schedule';
   let brush = '班';
   const $ = (id) => document.getElementById(id);
@@ -276,7 +276,9 @@
       const c = cfgOf(u);
       const manual = {};
       st.staff.forEach((p) => { const r = (st.cells && st.cells[p.id]) || []; const au = (st.auto && st.auto[p.id]) || []; manual[p.id] = Array.from({ length: n }, (_, i) => (au[i] ? '' : r[i] || '')); });
-      const base = { name: u, year: st.year, month: st.month, staff: st.staff, requiredRest: st.requiredRest, holidays: st.holidays || [], params: { supportMaxDays: st.supportMax == null ? 6 : st.supportMax, coverage: c.coverage, requireSenior: c.requireSenior }, lendCode: c.lend, lendNeedsSenior: c.lendNeedsSenior, seed: st.seed || 1 };
+      const rr = st.restManual ? st.requiredRest : R.redDays(st.year, st.month, st.holidays || []);
+      st.requiredRest = rr;
+      const base = { name: u, year: st.year, month: st.month, staff: st.staff, requiredRest: rr, holidays: st.holidays || [], params: { supportMaxDays: st.supportMax == null ? 6 : st.supportMax, coverage: c.coverage, requireSenior: c.requireSenior }, lendCode: c.lend, lendNeedsSenior: c.lendNeedsSenior, seed: st.seed || 1 };
       const pr = window.Solver.resolvePrebooks({ ...base, cells: manual, prebook: st.prebook || {} });
       return { manual, pr, unit: { ...base, cells: pr.cells, auto: {} }, c };
     };
@@ -327,17 +329,17 @@
 
   $('month').onchange = (e) => {
     const [y, m] = e.target.value.split('-').map(Number);
-    if (y && m) { S.year = y; S.month = m; S.holidays = autoHolidays(); S.cells = {}; S.auto = {}; S.autoReport = null; S.prebook = {}; recalcRest(); save(); render(); }
+    if (y && m) { S.year = y; S.month = m; S.holidays = autoHolidays(); S.cells = {}; S.auto = {}; S.autoReport = null; S.prebook = {}; S.restManual = false; recalcRest(); save(); render(); }
   };
   $('holidays').onchange = (e) => {
     S.holidays = e.target.value.split(/[,，\s]+/).map(Number).filter((d) => d >= 1 && d <= nDays());
-    recalcRest(); save(); render(false);
+    S.restManual = false; recalcRest(); save(); render(false);
   };
   const us = $('unit');
   if (us) { us.value = UNIT; us.onchange = () => { try { localStorage.setItem('miaoli-unit', us.value); } catch (e) {} location.reload(); }; }
   document.title = UNIT + ' 排班';
   const h1u = document.getElementById('unitName'); if (h1u) h1u.textContent = UNIT;
-  $('required').onchange = (e) => { S.requiredRest = Number(e.target.value); save(); render(false); };
+  $('required').onchange = (e) => { S.requiredRest = Number(e.target.value); S.restManual = true; save(); render(false); };
   $('requestedAt').onchange = (e) => { S.requestedAt = e.target.value; save(); render(false); };
   document.querySelectorAll('.tabs button').forEach((b) => { b.onclick = () => { mode = b.dataset.mode; render(false); }; });
   $('addStaff').onclick = () => { S.staff.push({ id: 's' + Date.now(), name: '新人員', level: 'N1', shift: 'D', support: false, prevShift: '' }); save(); render(); };
