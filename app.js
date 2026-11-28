@@ -11,7 +11,7 @@
   const BRUSHES = [
     { code: '班', label: '上班', cls: 'D' }, { code: '例', label: '例', cls: 'rest' }, { code: '休息', label: '休息', cls: 'rest' },
     { code: '休假', label: '休假', cls: 'leave' }, { code: '特休', label: '特休', cls: 'leave' }, { code: '補休', label: '補休', cls: 'rest' },
-    { code: '國定', label: '國定', cls: 'rest' }, { code: CFG.lend, label: CFG.lendLabel, cls: 'lend' }, { code: '公假', label: '公假', cls: 'leave' }, { code: '8-5', label: '8-5班', cls: 'adm' }, { code: '', label: '清除', cls: '' },
+    { code: '國定', label: '國定', cls: 'rest' }, { code: '2A', label: '2A', cls: UNIT === '2A' ? 'D' : 'lend' }, { code: '3AB', label: '3AB', cls: UNIT === '3AB' ? 'D' : 'lend' }, { code: '公假', label: '公假', cls: 'leave' }, { code: '8-5', label: '8-5班', cls: 'adm' }, { code: '', label: '清除', cls: '' },
   ];
   const PREBOOK_BRUSHES = ['休假', '特休', ''];
 
@@ -150,7 +150,7 @@
       td.onclick = () => {
         const p = S.staff.find((x) => x.id === td.dataset.id);
         const r = rowOf(p.id);
-        r[td.dataset.d - 1] = brush === '班' ? p.shift : brush;
+        r[td.dataset.d - 1] = brush === '班' || brush === UNIT ? p.shift : brush; // 本單位的畫筆＝在本單位上原班別；另一單位＝借調
         if (mode === 'schedule' && S.auto[p.id]) S.auto[p.id][td.dataset.d - 1] = false;
         save(); render();
       };
@@ -302,7 +302,7 @@
     el.innerHTML = h;
   }
 
-  function runAuto(newSeed) {
+  function runAuto(newSeed, incoming) {
     S.staff.forEach((p) => { if (p.restAuto) { delete p.restDays; delete p.restAuto; } });
     if (newSeed) S.seed = (S.seed || 1) + 1;
     const n = nDays();
@@ -313,7 +313,7 @@
       const a = S.auto[p.id] || [];
       manual[p.id] = r.map((c, i) => (a[i] ? '' : c));
     });
-    const common = { lendTouched: S.lendTouched, year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { supportMaxDays: S.supportMax, coverage: CFG.coverage, requireSenior: CFG.requireSenior }, lendCode: CFG.lend };
+    const common = { lendTouched: S.lendTouched, year: S.year, month: S.month, staff: S.staff, requiredRest: S.requiredRest, holidays: S.holidays, params: { supportMaxDays: S.supportMax, coverage: CFG.coverage, requireSenior: CFG.requireSenior }, lendCode: CFG.lend, incoming };
     // 預假審核：特休優先，同類依登記先後；人力不足的預假被削減
     const pr = window.Solver.resolvePrebooks({ ...common, cells: manual, prebook: S.prebook });
     const res = window.Solver.autoSchedule({ ...common, cells: pr.cells, seed: S.seed });
@@ -379,6 +379,65 @@
   }
   const jb = $('jointRun');
   if (jb) jb.onclick = async () => { const t = jb.textContent; jb.textContent = '排班中…'; jb.disabled = true; try { await runJoint(true, (m) => { jb.textContent = m; }); } catch (e) { const rep = $('autoReport'); if (rep) rep.innerHTML = `<div class="issue">排班發生錯誤：${esc(e && e.message || e)}</div>`; } finally { jb.textContent = t; jb.disabled = false; } };
+  // 只排 3AB：不動 2A 的班表；2A 班表上已標「3AB」的日子算作 3AB 的借入人力
+  function run3AB() {
+    const n = nDays(), inc = {};
+    const O = loadOther();
+    if (O && O.staff && O.year === S.year && O.month === S.month) {
+      O.staff.forEach((p) => {
+        if (p.extra) return;
+        ((O.cells || {})[p.id] || []).slice(0, n).forEach((c, i) => { if (c === '3AB') { if (!inc[p.shift]) inc[p.shift] = new Array(n).fill(0); inc[p.shift][i]++; } });
+      });
+      if (O.incoming) { delete O.incoming; try { localStorage.setItem('miaoli-scheduler-2a-v1', JSON.stringify(O)); } catch (e) {} } // 之前聯合排班的借入人數已失效
+    }
+    S.incoming = inc;
+    runAuto(true, inc);
+  }
+  $('run3AB').onclick = () => {
+    if (UNIT === '3AB') return run3AB();
+    let T = null;
+    try { T = JSON.parse(localStorage.getItem('miaoli-scheduler-3ab-v1')); } catch (e) {}
+    if (!T || !T.staff || !T.staff.length) { $('autoReport').innerHTML = '<div class="issue">3AB 還沒有人員資料，請先匯入 3AB 人員設定。</div>'; return; }
+    if (T.year !== S.year || T.month !== S.month) { $('autoReport').innerHTML = `<div class="issue">3AB 的月份是 ${T.year}/${T.month}，和這邊的 ${S.year}/${S.month} 不同，請先把兩邊調成同一個月。</div>`; return; }
+    try { sessionStorage.setItem('miaoli-run3ab', '1'); localStorage.setItem('miaoli-unit', '3AB'); } catch (e) {}
+    location.reload();
+  };
+  $('importXlsx').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const list = window.XlsxImport.candidates(await window.XlsxImport.readWorkbook(await f.arrayBuffer()));
+      if (!list.length) throw new Error('找不到 2A 班表（需要有一列 1、2、3… 的日期，以及人員姓名）');
+      let parsed = list[0];
+      if (list.length > 1) {
+        const k = prompt('檔案裡有多張班表，請輸入要匯入的編號：\n' + list.map((x, i) => `${i + 1}. ${x.sheet}`).join('\n'), String(list.length));
+        if (k === null) return;
+        parsed = list[Number(k) - 1];
+        if (!parsed) throw new Error('編號不正確');
+      }
+      let { year, month } = parsed;
+      if (!year || !month || month > 12) {
+        const k = prompt('表頭沒有寫年月，請輸入（例如 2026-12）：', `${S.year}-${String(S.month).padStart(2, '0')}`);
+        if (k === null) return;
+        [year, month] = k.split('-').map(Number);
+        if (!year || !(month >= 1 && month <= 12)) throw new Error('年月格式不正確');
+      }
+      if (R.daysInMonth(year, month) !== parsed.days) throw new Error(`${year}/${month} 應有 ${R.daysInMonth(year, month)} 天，表上是 ${parsed.days} 天`);
+      let old = null;
+      try { old = JSON.parse(localStorage.getItem('miaoli-scheduler-2a-v1')); } catch (err) {}
+      const out = window.XlsxImport.toState(old, parsed, year, month, window.Holidays.forMonth(year, month));
+      const unknown = Object.keys(parsed.unknown);
+      const msg = `匯入到 2A：${year} 年 ${month} 月，共 ${parsed.people.length} 人\n` +
+        parsed.people.map((q) => `${q.name}（${q.level || '職級未寫'} ${q.shift || '班別未知'}${q.support ? ' 支援' : ''}）`).join('、') +
+        (out.removed.length ? `\n\n不在 Excel 裡、會從 2A 名單移除：${out.removed.join('、')}` : '') +
+        (unknown.length ? `\n\n系統不認得的代碼（照原字保留，請檢查）：${unknown.join('、')}` : '') +
+        '\n\n會覆蓋目前的 2A 班表，確定匯入？';
+      if (!confirm(msg)) return;
+      localStorage.setItem('miaoli-scheduler-2a-v1', JSON.stringify(out.state));
+      localStorage.setItem('miaoli-unit', '2A');
+      location.reload();
+    } catch (err) { alert('匯入失敗：' + ((err && err.message) || err)); }
+    finally { e.target.value = ''; }
+  };
   $('supportMax').onchange = (e) => { S.supportMax = Math.max(0, Number(e.target.value) || 0); save(); };
   $('autoRun').onclick = () => runAuto(false);
   $('autoClear').onclick = () => {
@@ -469,4 +528,7 @@
     a.download = name; a.click();
   }
   render();
+  let pending = false;
+  try { pending = sessionStorage.getItem('miaoli-run3ab') === '1'; sessionStorage.removeItem('miaoli-run3ab'); } catch (e) {}
+  if (pending && UNIT === '3AB') setTimeout(() => $('run3AB').click(), 50);
 })();

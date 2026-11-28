@@ -83,6 +83,7 @@
     <div class="row">
       <label>支援每人最多 <input type="number" id="supportMax" min="0" max="31" style="width:56px"> 天</label>
       <button id="autoRun" class="primary">自動排班</button>
+      <button id="run3AB">只排 3AB</button>
       <button id="jointRun">2A＋3AB 聯合排班</button>
       <button id="autoClear">清掉系統排的</button>
     </div>
@@ -122,7 +123,8 @@
       <button id="exportCsv">匯出 CSV</button>
       <button id="exportXlsx" class="primary">匯出 Excel</button>
       <button id="exportXlsx2">匯出 Excel（2A＋3AB 兩張）</button>
-      <label>匯入 <input type="file" id="importJson" accept=".json"></label>
+      <label>匯入 JSON <input type="file" id="importJson" accept=".json"></label>
+      <label>匯入 2A Excel 班表 <input type="file" id="importXlsx" accept=".xlsx"></label>
     </div>
   </div>
 </main>
@@ -130,6 +132,7 @@
 <script src="holidays.js"></script>
 <script src="solver.js"></script>
 <script src="xlsx.js"></script>
+<script src="import.js"></script>
 <script src="app.js"></script>
 <script>
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
