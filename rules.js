@@ -100,7 +100,7 @@
       let streak = p.prevStreak || 0;
       let flagged = false;
       r.forEach((c, i) => {
-        if (WORK.includes(c) || isLend(c)) {
+        if (WORK.includes(c) || isLend(c) || c === '8-5') {
           streak++;
           if (streak > P.maxConsecutive && !flagged) {
             add('consecutive', 'error', `${p.name} 到 ${month}/${i + 1} 已連續上班 ${streak} 天，上限 ${P.maxConsecutive} 天`, p.id, i + 1);
@@ -110,7 +110,7 @@
       });
       // R6b 班至少連上 2 天：不得出現「上 1 天班就休息」（月初、月底的一天受前後月影響，不檢查）
       const REST_ALL = LEGAL_REST.concat(['特休', '公假']);
-      const isW = (c) => WORK.includes(c) || isLend(c);
+      const isW = (c) => WORK.includes(c) || isLend(c) || c === '8-5';
       for (let i = 1; i < r.length - 1; i++) {
         if (isW(r[i]) && REST_ALL.includes(r[i - 1]) && REST_ALL.includes(r[i + 1])) {
           add('min-work-run', 'error', `${p.name} ${month}/${i + 1} 只上 1 天班就休息，班至少要連上 2 天`, p.id, i + 1);

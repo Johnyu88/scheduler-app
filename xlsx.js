@@ -82,7 +82,7 @@
   }
 
   // ---------- 班表 → 工作表（版面仿照護理長現行的班表） ----------
-  const FILL = { D: 'FFF2CC', E: 'FCE4D6', N: 'DDEBF7', 例: 'E2EFDA', 休息: 'E2EFDA', 國定: 'C6E0B4', 補休: 'E2EFDA', 補國: 'E2EFDA', 休假: 'E2EFDA', 特休: 'E4DFEC', 公假: 'EDEDED', '3AB': 'EADCF4', '2A': 'EADCF4' };
+  const FILL = { D: 'FFF2CC', E: 'FCE4D6', N: 'DDEBF7', 例: 'E2EFDA', 休息: 'E2EFDA', 國定: 'C6E0B4', 補休: 'E2EFDA', 補國: 'E2EFDA', 休假: 'E2EFDA', 特休: 'E4DFEC', 公假: 'EDEDED', '8-5': 'FFE8CC', '3AB': 'EADCF4', '2A': 'EADCF4' };
   const WD = ['日', '一', '二', '三', '四', '五', '六'];
   const SHIFT_ORDER = { D: 0, E: 1, N: 2 };
   // st = 該單位的儲存狀態；unit = '2A' | '3AB'
@@ -95,7 +95,7 @@
     const first = 3, last = first + n - 1; // 0-based 欄：日期在 D.. 
     const isOff = (d) => { const w = new Date(st.year, st.month - 1, d).getDay(); return w === 0 || w === 6 || (st.holidays || []).includes(d); };
     for (let i = 0; i < n; i++) widths[first + i] = 5.2;
-    const sumCols = ['例', '休息', '國定', '補國', '休假', '補休', '公假', '公差', '特休'];
+    const sumCols = ['例', '休息', '國定', '補國', '休假', '補休', '公假', '8-5', '公差', '特休'];
     const sc0 = last + 2; // 簽名欄之後
     widths[last + 1] = 14;
     sumCols.forEach((_, i) => (widths[sc0 + i] = 6));

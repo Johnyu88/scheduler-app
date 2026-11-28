@@ -11,7 +11,7 @@
   const BRUSHES = [
     { code: '班', label: '上班', cls: 'D' }, { code: '例', label: '例', cls: 'rest' }, { code: '休息', label: '休息', cls: 'rest' },
     { code: '休假', label: '休假', cls: 'leave' }, { code: '特休', label: '特休', cls: 'leave' }, { code: '補休', label: '補休', cls: 'rest' },
-    { code: '國定', label: '國定', cls: 'rest' }, { code: CFG.lend, label: CFG.lendLabel, cls: 'lend' }, { code: '公假', label: '公假', cls: 'leave' }, { code: '', label: '清除', cls: '' },
+    { code: '國定', label: '國定', cls: 'rest' }, { code: CFG.lend, label: CFG.lendLabel, cls: 'lend' }, { code: '公假', label: '公假', cls: 'leave' }, { code: '8-5', label: '8-5班', cls: 'adm' }, { code: '', label: '清除', cls: '' },
   ];
   const PREBOOK_BRUSHES = ['休假', '特休', ''];
 
@@ -55,6 +55,7 @@
   function codeClass(c) {
     if (c === 'D' || c === 'E' || c === 'N') return c;
     if (c === '3AB' || c === '2A') return 'lend';
+    if (c === '8-5') return 'adm';
     if (['例', '休息', '國定', '補國', '補休'].includes(c)) return 'rest';
     if (c) return 'leave';
     return '';
